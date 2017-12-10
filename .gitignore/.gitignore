@@ -1,0 +1,2 @@
+git remote add origin https://github.com/OWspz/future.git
+ git push -u origin master
