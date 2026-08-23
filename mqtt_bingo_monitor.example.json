@@ -1,0 +1,33 @@
+{
+  "alert_email": "asus4951024@gmail.com",
+  "smtp": {
+    "host": "smtp.gmail.com",
+    "port": 587,
+    "user": "asus4951024@gmail.com",
+    "password": "",
+    "from_addr": "asus4951024@gmail.com",
+    "starttls": true,
+    "ssl": false
+  },
+  "sites": [
+    {
+      "name": "A站",
+      "host": "mqtt.kuaishou1688.com",
+      "port": 1883,
+      "tls": false,
+      "websocket": false
+    },
+    {
+      "name": "B站",
+      "host": "mqtt.sport.kuaishou1688.com",
+      "port": 1883,
+      "tls": false,
+      "websocket": false
+    }
+  ],
+  "history_count": 220,
+  "stale_grace_sec": 90,
+  "alert_cooldown_sec": 1800,
+  "state_file": "mqtt_bingo_monitor.state.json",
+  "log_file": "mqtt_bingo_monitor.log"
+}
