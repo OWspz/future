@@ -11,13 +11,29 @@ import urllib.error
 import urllib.request
 
 DEFAULT_URL = "https://infiniteslop.ai/api/vote.php"
-DEFAULT_ID = 61252
+DEFAULT_SOURCE_URL = "https://studio.404hubs.com/latest"
+DEFAULT_ID = 65432
 DEFAULT_TIMES = 10
 
 
 def random_cid() -> str:
     """Generate a 32-char hex cid, matching the original payload format."""
     return uuid.uuid4().hex
+
+
+def fetch_source(source_url: str, timeout: float) -> tuple[int, int]:
+    """Read `id,times` from a text endpoint such as studio.404hubs.com/latest."""
+    request = urllib.request.Request(
+        source_url,
+        headers={"Accept": "text/plain,*/*"},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        text = response.read().decode("utf-8", errors="replace").strip()
+    parts = [p.strip() for p in text.split(",")]
+    if len(parts) < 2:
+        raise ValueError(f"expected 'id,times', got: {text!r}")
+    return int(parts[0]), int(parts[1])
 
 
 HEADERS = {
@@ -101,7 +117,17 @@ def main() -> int:
         description="POST test for infiniteslop.ai /api/vote.php"
     )
     parser.add_argument("--url", default=DEFAULT_URL, help="API URL")
-    parser.add_argument("--id", type=int, default=DEFAULT_ID, help="vote id")
+    parser.add_argument(
+        "--from-url",
+        nargs="?",
+        const=DEFAULT_SOURCE_URL,
+        default=None,
+        help=(
+            "read id,times from a text URL "
+            f"(default if flag only: {DEFAULT_SOURCE_URL})"
+        ),
+    )
+    parser.add_argument("--id", type=int, default=None, help="vote id")
     parser.add_argument(
         "--cid",
         default=None,
@@ -110,23 +136,41 @@ def main() -> int:
     parser.add_argument(
         "--times",
         type=int,
-        default=DEFAULT_TIMES,
-        help="how many POST requests to send (default: 10)",
+        default=None,
+        help="how many POST requests to send",
     )
     parser.add_argument("--timeout", type=float, default=15.0, help="timeout seconds")
     args = parser.parse_args()
-    if args.times < 1:
+
+    vote_id = args.id
+    times = args.times
+    if args.from_url:
+        try:
+            fetched_id, fetched_times = fetch_source(args.from_url, args.timeout)
+        except (urllib.error.URLError, urllib.error.HTTPError, ValueError) as exc:
+            print(f"Failed to read {args.from_url}: {exc}")
+            return 1
+        print(f"Source {args.from_url} -> id={fetched_id} times={fetched_times}")
+        if vote_id is None:
+            vote_id = fetched_id
+        if times is None:
+            times = fetched_times
+    if vote_id is None:
+        vote_id = DEFAULT_ID
+    if times is None:
+        times = DEFAULT_TIMES
+    if times < 1:
         print("--times must be >= 1")
         return 1
 
     exit_code = 0
-    for i in range(1, args.times + 1):
+    for i in range(1, times + 1):
         cid = args.cid if args.cid else random_cid()
-        label = f"[{i}/{args.times}]"
-        code = post_vote(args.url, args.id, cid, args.timeout, label=label)
+        label = f"[{i}/{times}]"
+        code = post_vote(args.url, vote_id, cid, args.timeout, label=label)
         if code != 0:
             exit_code = code
-        if i < args.times:
+        if i < times:
             print()
     return exit_code
 
