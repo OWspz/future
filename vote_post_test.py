@@ -184,7 +184,7 @@ async def listen_ws(ws_url: str, ws_name: str, api_url: str, timeout: float) -> 
                 continue
 
             message = data
-            if kind == "message" and isinstance(data.get("message"), dict):
+            if kind in ("message", "chat") and isinstance(data.get("message"), dict):
                 message = data["message"]
             if "text" in message:
                 await handle_ws_text(
