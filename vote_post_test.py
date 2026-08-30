@@ -25,7 +25,14 @@ def fetch_source(source_url: str, timeout: float) -> tuple[int, int]:
     """Read `id,times` from a text endpoint such as studio.404hubs.com/latest."""
     request = urllib.request.Request(
         source_url,
-        headers={"Accept": "text/plain,*/*"},
+        headers={
+            "Accept": "text/plain,*/*",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/152.0.0.0 Safari/537.36"
+            ),
+        },
         method="GET",
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
