@@ -138,12 +138,13 @@ async def handle_ws_text(
     if times < 1:
         print("Skip: times must be >= 1")
         return
+    # One new WebSocket chat message = one run. Do not reuse HTTP seen-keys.
     code = run_batch(
         api_url,
         vote_id,
         times,
         timeout,
-        skip_if_seen=True,
+        skip_if_seen=False,
     )
     if code == 0:
         await reply_ok(ws, ws_name)
@@ -184,6 +185,7 @@ async def listen_ws(ws_url: str, ws_name: str, api_url: str, timeout: float) -> 
                     f"WS hello: skip {len(seen_message_ids)} history, "
                     f"online={data.get('online')}"
                 )
+                print("WS waiting for new chat jobs")
                 continue
             if kind == "online":
                 print(f"WS online={data.get('online')}")
