@@ -6,12 +6,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import uuid
 import urllib.error
 import urllib.request
 
 DEFAULT_URL = "https://infiniteslop.ai/api/vote.php"
 DEFAULT_ID = 52391
-DEFAULT_CID = "2130cf29be6d453d943d6803f87fbfda"
+
+
+def random_cid() -> str:
+    """Generate a 32-char hex cid, matching the original payload format."""
+    return uuid.uuid4().hex
 
 HEADERS = {
     "Content-Type": "application/json",
@@ -91,10 +96,15 @@ def main() -> int:
     )
     parser.add_argument("--url", default=DEFAULT_URL, help="API URL")
     parser.add_argument("--id", type=int, default=DEFAULT_ID, help="vote id")
-    parser.add_argument("--cid", default=DEFAULT_CID, help="client/campaign id")
+    parser.add_argument(
+        "--cid",
+        default=None,
+        help="client id (32-char hex); omit to generate a new random value",
+    )
     parser.add_argument("--timeout", type=float, default=15.0, help="timeout seconds")
     args = parser.parse_args()
-    return post_vote(args.url, args.id, args.cid, args.timeout)
+    cid = args.cid if args.cid else random_cid()
+    return post_vote(args.url, args.id, cid, args.timeout)
 
 
 if __name__ == "__main__":
