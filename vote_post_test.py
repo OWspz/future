@@ -9,11 +9,13 @@ import sys
 import uuid
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 DEFAULT_URL = "https://infiniteslop.ai/api/vote.php"
 DEFAULT_SOURCE_URL = "https://studio.404hubs.com/latest"
 DEFAULT_ID = 65432
 DEFAULT_TIMES = 10
+SEEN_PATH = Path(__file__).resolve().with_name(".vote_source_seen")
 
 
 def random_cid() -> str:
@@ -41,6 +43,20 @@ def fetch_source(source_url: str, timeout: float) -> tuple[int, int]:
     if len(parts) < 2:
         raise ValueError(f"expected 'id,times', got: {text!r}")
     return int(parts[0]), int(parts[1])
+
+
+def source_key(vote_id: int, times: int) -> str:
+    return f"{vote_id},{times}"
+
+
+def load_seen() -> str:
+    if not SEEN_PATH.is_file():
+        return ""
+    return SEEN_PATH.read_text(encoding="utf-8").strip()
+
+
+def save_seen(key: str) -> None:
+    SEEN_PATH.write_text(key + "\n", encoding="utf-8")
 
 
 HEADERS = {
@@ -147,10 +163,16 @@ def main() -> int:
         help="how many POST requests to send",
     )
     parser.add_argument("--timeout", type=float, default=15.0, help="timeout seconds")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="run even if this id,times was already processed from --from-url",
+    )
     args = parser.parse_args()
 
     vote_id = args.id
     times = args.times
+    used_source = False
     if args.from_url:
         try:
             fetched_id, fetched_times = fetch_source(args.from_url, args.timeout)
@@ -162,6 +184,7 @@ def main() -> int:
             vote_id = fetched_id
         if times is None:
             times = fetched_times
+        used_source = True
     if vote_id is None:
         vote_id = DEFAULT_ID
     if times is None:
@@ -169,6 +192,11 @@ def main() -> int:
     if times < 1:
         print("--times must be >= 1")
         return 1
+
+    key = source_key(vote_id, times)
+    if used_source and not args.force and load_seen() == key:
+        print(f"Skip: {key} already processed")
+        return 0
 
     exit_code = 0
     for i in range(1, times + 1):
@@ -179,6 +207,8 @@ def main() -> int:
             exit_code = code
         if i < times:
             print()
+    if used_source and exit_code == 0:
+        save_seen(key)
     return exit_code
 
 
