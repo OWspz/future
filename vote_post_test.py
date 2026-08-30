@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 
 DEFAULT_URL = "https://infiniteslop.ai/api/vote.php"
-DEFAULT_ID = 60506
+DEFAULT_ID = 60648
 DEFAULT_TIMES = 10
 
 
