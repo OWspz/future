@@ -139,31 +139,45 @@ async def handle_ws_text(
         print("Skip: times must be >= 1")
         return
     # One new WebSocket chat message = one run. Do not reuse HTTP seen-keys.
-    code = run_batch(
+    # Run in a thread so WS pings keep the connection alive during POSTs.
+    code = await asyncio.to_thread(
+        run_batch,
         api_url,
         vote_id,
         times,
         timeout,
-        skip_if_seen=False,
+        None,
+        False,
+        False,
     )
     if code == 0:
-        await reply_ok(ws, ws_name)
+        try:
+            await reply_ok(ws, ws_name)
+        except Exception as exc:
+            print(f"WS reply OK failed: {exc}")
 
 
-async def listen_ws(ws_url: str, ws_name: str, api_url: str, timeout: float) -> int:
-    try:
-        import websockets
-    except ImportError:
-        print("websockets is required: pip install websockets")
-        return 1
-
+async def run_ws_session(
+    websockets,
+    ws_url: str,
+    ws_name: str,
+    api_url: str,
+    timeout: float,
+    seen_message_ids: set[str],
+    delay_box: list[float],
+) -> None:
     headers = {
         "User-Agent": HEADERS["User-Agent"],
         "Origin": "https://studio.404hubs.com",
     }
     print(f"WS connect {ws_url} as {ws_name}")
-    async with websockets.connect(ws_url, additional_headers=headers) as ws:
-        seen_message_ids: set[str] = set()
+    async with websockets.connect(
+        ws_url,
+        additional_headers=headers,
+        ping_interval=20,
+        ping_timeout=20,
+    ) as ws:
+        delay_box[0] = 1.0
         async for raw in ws:
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8", errors="replace")
@@ -198,7 +212,39 @@ async def listen_ws(ws_url: str, ws_name: str, api_url: str, timeout: float) -> 
                 await handle_ws_text(
                     ws, message, api_url, timeout, ws_name, seen_message_ids
                 )
-    return 0
+
+
+async def listen_ws(ws_url: str, ws_name: str, api_url: str, timeout: float) -> int:
+    try:
+        import websockets
+        from websockets.exceptions import ConnectionClosed
+    except ImportError:
+        print("websockets is required: pip install websockets")
+        return 1
+
+    seen_message_ids: set[str] = set()
+    delay_box = [1.0]
+    while True:
+        try:
+            await run_ws_session(
+                websockets,
+                ws_url,
+                ws_name,
+                api_url,
+                timeout,
+                seen_message_ids,
+                delay_box,
+            )
+            print("WS disconnected cleanly, reconnecting")
+        except asyncio.CancelledError:
+            raise
+        except (ConnectionClosed, OSError, TimeoutError) as exc:
+            print(f"WS disconnected: {exc}")
+        except Exception as exc:
+            print(f"WS error: {exc}")
+        print(f"WS reconnect in {delay_box[0]:.0f}s")
+        await asyncio.sleep(delay_box[0])
+        delay_box[0] = min(delay_box[0] * 2, 30.0)
 
 
 HEADERS = {
