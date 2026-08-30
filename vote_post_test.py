@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import re
 import sys
 import uuid
 import urllib.error
@@ -13,9 +15,12 @@ from pathlib import Path
 
 DEFAULT_URL = "https://infiniteslop.ai/api/vote.php"
 DEFAULT_SOURCE_URL = "https://studio.404hubs.com/latest"
+DEFAULT_WS_URL = "wss://studio.404hubs.com/ws"
+DEFAULT_WS_NAME = "vote_post_test"
 DEFAULT_ID = 65432
 DEFAULT_TIMES = 10
 SEEN_PATH = Path(__file__).resolve().with_name(".vote_source_seen")
+JOB_TEXT_RE = re.compile(r"^\s*(\d+)\s*,\s*(\d+)\s*$")
 
 
 def random_cid() -> str:
@@ -57,6 +62,135 @@ def load_seen() -> str:
 
 def save_seen(key: str) -> None:
     SEEN_PATH.write_text(key + "\n", encoding="utf-8")
+
+
+def parse_job_text(text: str) -> tuple[int, int] | None:
+    match = JOB_TEXT_RE.match(text or "")
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def run_batch(
+    api_url: str,
+    vote_id: int,
+    times: int,
+    timeout: float,
+    cid: str | None = None,
+    skip_if_seen: bool = False,
+    force: bool = False,
+) -> int:
+    key = source_key(vote_id, times)
+    if skip_if_seen and not force and load_seen() == key:
+        print(f"Skip: {key} already processed")
+        return 0
+
+    exit_code = 0
+    for i in range(1, times + 1):
+        next_cid = cid if cid else random_cid()
+        label = f"[{i}/{times}]"
+        code = post_vote(api_url, vote_id, next_cid, timeout, label=label)
+        if code != 0:
+            exit_code = code
+        if i < times:
+            print()
+    if skip_if_seen and exit_code == 0:
+        save_seen(key)
+    return exit_code
+
+
+async def reply_ok(ws, name: str) -> None:
+    await ws.send(json.dumps({"name": name, "text": "OK"}, ensure_ascii=False))
+    print("WS reply: OK")
+
+
+async def handle_ws_text(
+    ws,
+    payload: dict,
+    api_url: str,
+    timeout: float,
+    ws_name: str,
+    seen_message_ids: set[str],
+) -> None:
+    message_id = str(payload.get("id") or "")
+    if message_id:
+        if message_id in seen_message_ids:
+            return
+        seen_message_ids.add(message_id)
+
+    sender = str(payload.get("name") or "")
+    text = str(payload.get("text") or "")
+    if sender == ws_name or text.strip().upper() == "OK":
+        return
+
+    job = parse_job_text(text)
+    if job is None:
+        return
+
+    vote_id, times = job
+    print(f"WS job from {sender}: {vote_id},{times}")
+    if times < 1:
+        print("Skip: times must be >= 1")
+        return
+    code = run_batch(
+        api_url,
+        vote_id,
+        times,
+        timeout,
+        skip_if_seen=True,
+    )
+    if code == 0:
+        await reply_ok(ws, ws_name)
+
+
+async def listen_ws(ws_url: str, ws_name: str, api_url: str, timeout: float) -> int:
+    try:
+        import websockets
+    except ImportError:
+        print("websockets is required: pip install websockets")
+        return 1
+
+    headers = {
+        "User-Agent": HEADERS["User-Agent"],
+        "Origin": "https://studio.404hubs.com",
+    }
+    print(f"WS connect {ws_url} as {ws_name}")
+    async with websockets.connect(ws_url, additional_headers=headers) as ws:
+        seen_message_ids: set[str] = set()
+        async for raw in ws:
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", errors="replace")
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                print(f"WS non-json: {raw}")
+                continue
+
+            if not isinstance(data, dict):
+                continue
+
+            kind = data.get("type")
+            if kind == "hello":
+                for item in data.get("messages") or []:
+                    if isinstance(item, dict) and item.get("id"):
+                        seen_message_ids.add(str(item["id"]))
+                print(
+                    f"WS hello: skip {len(seen_message_ids)} history, "
+                    f"online={data.get('online')}"
+                )
+                continue
+            if kind == "online":
+                print(f"WS online={data.get('online')}")
+                continue
+
+            message = data
+            if kind == "message" and isinstance(data.get("message"), dict):
+                message = data["message"]
+            if "text" in message:
+                await handle_ws_text(
+                    ws, message, api_url, timeout, ws_name, seen_message_ids
+                )
+    return 0
 
 
 HEADERS = {
@@ -168,7 +302,28 @@ def main() -> int:
         action="store_true",
         help="run even if this id,times was already processed from --from-url",
     )
+    parser.add_argument(
+        "--ws",
+        nargs="?",
+        const=DEFAULT_WS_URL,
+        default=None,
+        help=f"listen on WebSocket (default: {DEFAULT_WS_URL})",
+    )
+    parser.add_argument(
+        "--ws-name",
+        default=DEFAULT_WS_NAME,
+        help=f"name sent with OK replies (default: {DEFAULT_WS_NAME})",
+    )
     args = parser.parse_args()
+
+    if args.ws:
+        try:
+            return asyncio.run(
+                listen_ws(args.ws, args.ws_name, args.url, args.timeout)
+            )
+        except KeyboardInterrupt:
+            print("WS stopped")
+            return 0
 
     vote_id = args.id
     times = args.times
@@ -193,23 +348,15 @@ def main() -> int:
         print("--times must be >= 1")
         return 1
 
-    key = source_key(vote_id, times)
-    if used_source and not args.force and load_seen() == key:
-        print(f"Skip: {key} already processed")
-        return 0
-
-    exit_code = 0
-    for i in range(1, times + 1):
-        cid = args.cid if args.cid else random_cid()
-        label = f"[{i}/{times}]"
-        code = post_vote(args.url, vote_id, cid, args.timeout, label=label)
-        if code != 0:
-            exit_code = code
-        if i < times:
-            print()
-    if used_source and exit_code == 0:
-        save_seen(key)
-    return exit_code
+    return run_batch(
+        args.url,
+        vote_id,
+        times,
+        args.timeout,
+        cid=args.cid,
+        skip_if_seen=used_source,
+        force=args.force,
+    )
 
 
 if __name__ == "__main__":
