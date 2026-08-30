@@ -54,14 +54,20 @@ def source_key(vote_id: int, times: int) -> str:
     return f"{vote_id},{times}"
 
 
-def load_seen() -> str:
+def load_seen() -> set[str]:
     if not SEEN_PATH.is_file():
-        return ""
-    return SEEN_PATH.read_text(encoding="utf-8").strip()
+        return set()
+    return {
+        line.strip()
+        for line in SEEN_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
 
 
 def save_seen(key: str) -> None:
-    SEEN_PATH.write_text(key + "\n", encoding="utf-8")
+    seen = load_seen()
+    seen.add(key)
+    SEEN_PATH.write_text("".join(f"{item}\n" for item in sorted(seen)), encoding="utf-8")
 
 
 def parse_job_text(text: str) -> tuple[int, int] | None:
@@ -81,7 +87,7 @@ def run_batch(
     force: bool = False,
 ) -> int:
     key = source_key(vote_id, times)
-    if skip_if_seen and not force and load_seen() == key:
+    if skip_if_seen and not force and key in load_seen():
         print(f"Skip: {key} already processed")
         return 0
 
