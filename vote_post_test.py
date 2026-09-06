@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import random
 import re
 import sys
+import time
 import uuid
 import urllib.error
 import urllib.request
@@ -77,6 +79,12 @@ def random_uid() -> str:
     return uuid.uuid4().hex[:24]
 
 
+def sleep_between_posts() -> None:
+    seconds = random.uniform(0.2, 1.0)
+    print(f"wait {seconds:.2f}s")
+    time.sleep(seconds)
+
+
 def parse_ws_job(text: str) -> tuple[str, str | int, int] | None:
     raw = text or ""
     like = LIKE_JOB_RE.match(raw)
@@ -111,6 +119,7 @@ def run_batch(
             exit_code = code
         if i < times:
             print()
+            sleep_between_posts()
     if skip_if_seen and exit_code == 0:
         save_seen(key)
     return exit_code
@@ -398,6 +407,7 @@ def run_like_batch(api_url: str, seg: str, times: int, timeout: float) -> int:
             exit_code = code
         if i < times:
             print()
+            sleep_between_posts()
     return exit_code
 
 
