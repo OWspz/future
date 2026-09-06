@@ -152,11 +152,11 @@ async def handle_ws_text(
     # One new WebSocket chat message = one run. Do not reuse HTTP seen-keys.
     # Run in a thread so WS pings keep the connection alive during POSTs.
     if kind == "like":
-        code = await asyncio.to_thread(
+        await asyncio.to_thread(
             run_like_batch, DEFAULT_LIKE_URL, str(target), times, timeout
         )
     else:
-        code = await asyncio.to_thread(
+        await asyncio.to_thread(
             run_batch,
             api_url,
             int(target),
@@ -166,11 +166,10 @@ async def handle_ws_text(
             False,
             False,
         )
-    if code == 0:
-        try:
-            await reply_ok(ws, ws_name)
-        except Exception as exc:
-            print(f"WS reply OK failed: {exc}")
+    try:
+        await reply_ok(ws, ws_name)
+    except Exception as exc:
+        print(f"WS reply OK failed: {exc}")
 
 
 async def run_ws_session(
