@@ -14,6 +14,7 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_URL = "https://infiniteslop.ai/api/vote.php"
+DEFAULT_LIKE_URL = "https://infiniteslop.ai/api/like"
 DEFAULT_SOURCE_URL = "https://studio.404hubs.com/latest"
 DEFAULT_WS_URL = "wss://studio.404hubs.com/ws"
 DEFAULT_WS_NAME = "vote_post_test"
@@ -21,6 +22,7 @@ DEFAULT_ID = 65432
 DEFAULT_TIMES = 10
 SEEN_PATH = Path(__file__).resolve().with_name(".vote_source_seen")
 JOB_TEXT_RE = re.compile(r"^\s*(\d+)\s*,\s*(\d+)\s*$")
+LIKE_JOB_RE = re.compile(r"^\s*(\S+\.ts)\s*,\s*(\d+)\s*$", re.IGNORECASE)
 
 
 def random_cid() -> str:
@@ -70,11 +72,20 @@ def save_seen(key: str) -> None:
     SEEN_PATH.write_text("".join(f"{item}\n" for item in sorted(seen)), encoding="utf-8")
 
 
-def parse_job_text(text: str) -> tuple[int, int] | None:
-    match = JOB_TEXT_RE.match(text or "")
-    if not match:
-        return None
-    return int(match.group(1)), int(match.group(2))
+def random_uid() -> str:
+    """24-char hex uid, matching the browser like payload."""
+    return uuid.uuid4().hex[:24]
+
+
+def parse_ws_job(text: str) -> tuple[str, str | int, int] | None:
+    raw = text or ""
+    like = LIKE_JOB_RE.match(raw)
+    if like:
+        return "like", like.group(1), int(like.group(2))
+    vote = JOB_TEXT_RE.match(raw)
+    if vote:
+        return "vote", int(vote.group(1)), int(vote.group(2))
+    return None
 
 
 def run_batch(
@@ -129,27 +140,32 @@ async def handle_ws_text(
     if sender == ws_name or text.strip().upper() == "OK":
         return
 
-    job = parse_job_text(text)
+    job = parse_ws_job(text)
     if job is None:
         return
 
-    vote_id, times = job
-    print(f"WS job from {sender}: {vote_id},{times}")
+    kind, target, times = job
+    print(f"WS {kind} job from {sender}: {target},{times}")
     if times < 1:
         print("Skip: times must be >= 1")
         return
     # One new WebSocket chat message = one run. Do not reuse HTTP seen-keys.
     # Run in a thread so WS pings keep the connection alive during POSTs.
-    code = await asyncio.to_thread(
-        run_batch,
-        api_url,
-        vote_id,
-        times,
-        timeout,
-        None,
-        False,
-        False,
-    )
+    if kind == "like":
+        code = await asyncio.to_thread(
+            run_like_batch, DEFAULT_LIKE_URL, str(target), times, timeout
+        )
+    else:
+        code = await asyncio.to_thread(
+            run_batch,
+            api_url,
+            int(target),
+            times,
+            timeout,
+            None,
+            False,
+            False,
+        )
     if code == 0:
         try:
             await reply_ok(ws, ws_name)
@@ -323,6 +339,69 @@ def post_vote(
     return 0
 
 
+def post_like(
+    url: str, seg: str, uid: str, timeout: float, label: str = ""
+) -> int:
+    payload = {"seg": seg, "uid": uid}
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    headers = dict(HEADERS)
+    headers["Cookie"] = "abv=idx4"
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers=headers,
+        method="POST",
+    )
+
+    if label:
+        print(label)
+    print(f"POST {url}")
+    print(f"Payload: {json.dumps(payload, ensure_ascii=False)}")
+    print("-" * 40)
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+            status = response.status
+            content_type = response.headers.get("Content-Type", "")
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        status = exc.code
+        content_type = exc.headers.get("Content-Type", "") if exc.headers else ""
+        print(f"HTTP {status}")
+        if content_type:
+            print(f"Content-Type: {content_type}")
+        print(raw.decode("utf-8", errors="replace"))
+        return 1
+    except urllib.error.URLError as exc:
+        print(f"Request failed: {exc.reason}")
+        return 1
+
+    text = raw.decode("utf-8", errors="replace")
+    print(f"HTTP {status}")
+    if content_type:
+        print(f"Content-Type: {content_type}")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        print(text)
+        return 1
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+    print("-" * 40)
+    return 0
+
+
+def run_like_batch(api_url: str, seg: str, times: int, timeout: float) -> int:
+    exit_code = 0
+    for i in range(1, times + 1):
+        code = post_like(api_url, seg, random_uid(), timeout, label=f"[{i}/{times}]")
+        if code != 0:
+            exit_code = code
+        if i < times:
+            print()
+    return exit_code
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="POST test for infiniteslop.ai /api/vote.php"
@@ -337,6 +416,11 @@ def main() -> int:
             "read id,times from a text URL "
             f"(default if flag only: {DEFAULT_SOURCE_URL})"
         ),
+    )
+    parser.add_argument(
+        "--like-seg",
+        default=None,
+        help="like segment such as 050540.ts (uses /api/like)",
     )
     parser.add_argument("--id", type=int, default=None, help="vote id")
     parser.add_argument(
@@ -378,6 +462,13 @@ def main() -> int:
         except KeyboardInterrupt:
             print("WS stopped")
             return 0
+
+    if args.like_seg:
+        times = args.times if args.times is not None else DEFAULT_TIMES
+        if times < 1:
+            print("--times must be >= 1")
+            return 1
+        return run_like_batch(DEFAULT_LIKE_URL, args.like_seg, times, args.timeout)
 
     vote_id = args.id
     times = args.times
