@@ -22,77 +22,92 @@
     <button data-mode="both">疊合</button>
   </div>
   <div class="row"><button id="spin" class="on">自動旋轉</button></div>
-  <label class="row" style="align-items:center">合併程度 <input id="k" type="range" min="1" max="10" value="2"> <span id="kv"></span></label>
+  <label class="row" style="align-items:center">顆粒大小 <select id="res"><option value="1">1（粗）</option><option value="0.5">1/2</option><option value="0.3333333" selected>1/3</option><option value="0.25">1/4（極細）</option></select></label>
+  <label class="row" style="align-items:center">合併程度 <input id="k" type="range" min="1" max="10" value="3"> <span id="kv"></span></label>
 </div>
 <div id="info"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="hull.js"></script>
 <script>
-// ───────── 1. 用 1×1×1 的小積木堆出機車 ─────────
-// 每個格子是一個單位立方體，格子座標 = 立方體中心。x 朝前、y 朝上、z 左右（左右對稱）。
-const V = new Map(); // "x,y,z" -> {part, color}
-const set = (part, color, x, y, z) => V.set(x + ',' + y + ',' + z, { part, color });
-const fill = (part, color, x0, x1, y0, y1, z0, z1) => {
-  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) set(part, color, x, y, z);
-};
-const sym = (fn) => { fn(1); fn(-1); }; // 左右各做一次
-// 輪子：圓環(輪胎) + 內圓(輪圈)，圓面在 x-y 平面
+// ───────── 1. 機車的「形狀描述」，再用正立方體小積木去填滿 ─────────
+// 單位長度 = 1；x 朝前、y 朝上、z 左右（左右對稱）。後蓋的 shapes 之後的會蓋掉前面的。
+const shapes = [];
+const shape = (part, color, inside) => shapes.push({ part, color, inside });
+// 軸對齊長方體。參數用「格子編號(含頭尾)」，也就是範圍會各外擴 0.5
+const box = (part, color, x0, x1, y0, y1, z0, z1) =>
+  shape(part, color, (x, y, z) => x >= x0 - .5 && x <= x1 + .5 && y >= y0 - .5 && y <= y1 + .5 && z >= z0 - .5 && z <= z1 + .5);
+const sym = (fn) => { fn(1); fn(-1); };
+// 輪子：圓環(輪胎) + 內圓(輪圈) + 中心(輪轂)，圓面在 x-y 平面
 function wheel(name, cx, cy, z0, z1) {
-  for (let x = cx - 5; x <= cx + 5; x++) for (let y = cy - 5; y <= cy + 5; y++) {
-    const d = Math.hypot(x - cx, y - cy);
-    for (let z = z0; z <= z1; z++) {
-      if (d <= 4.4 && d > 3.0) set(name + 'Tire', 0x2b2d33, x, y, z);
-      else if (d <= 3.0 && d > 1.2) set(name + 'Rim', 0xc9d1e0, x, y, z);
-      else if (d <= 1.2) set(name + 'Hub', 0x8a93a8, x, y, z);
-    }
-  }
+  const zin = (z) => z >= z0 - .5 && z <= z1 + .5;
+  shape(name + 'Tire', 0x2b2d33, (x, y, z) => { const d = Math.hypot(x - cx, y - cy); return zin(z) && d <= 4.4 && d > 3.0; });
+  shape(name + 'Rim', 0xc9d1e0, (x, y, z) => { const d = Math.hypot(x - cx, y - cy); return zin(z) && d <= 3.0 && d > 1.2; });
+  shape(name + 'Hub', 0x8a93a8, (x, y, z) => zin(z) && Math.hypot(x - cx, y - cy) <= 1.2);
 }
 wheel('rear', 6, 4, -1, 1);
 wheel('front', 22, 4, 0, 0);
-fill('frontHub', 0x8a93a8, 22, 22, 4, 4, -1, 1);
-
+box('frontHub', 0x8a93a8, 22, 22, 4, 4, -1, 1);
 // 引擎
-fill('engine', 0x6d7685, 11, 16, 2, 5, -1, 1);
-fill('engine', 0x6d7685, 12, 15, 6, 7, -1, 1);
+box('engine', 0x6d7685, 11, 16, 2, 5, -1, 1);
+box('engine', 0x6d7685, 12, 15, 6, 7, -1, 1);
 // 車架
-fill('frame', 0x3a3f4d, 9, 12, 6, 8, 0, 0);
-fill('frame', 0x3a3f4d, 16, 19, 6, 8, 0, 0);
+box('frame', 0x3a3f4d, 9, 12, 6, 8, 0, 0);
+box('frame', 0x3a3f4d, 16, 19, 6, 8, 0, 0);
 // 油箱、座墊、尾翼
-fill('tank', 0xd9342b, 14, 20, 9, 10, -1, 1);
-fill('tank', 0xd9342b, 13, 13, 9, 9, -1, 1);
-fill('seat', 0x2a2a2e, 7, 12, 9, 9, -1, 1);
-fill('tail', 0xd9342b, 3, 6, 9, 10, -1, 1);
-set('taillight', 0xff5a4a, 2, 10, 0);
-// 前叉（略向後傾）與擋泥板
-sym((s) => { for (let y = 4; y <= 12; y++) set('fork', 0xaab3c5, 22 - Math.round((y - 4) * 0.3), y, s); });
-fill('fender', 0xd9342b, 20, 25, 9, 9, 0, 0);
-// 龍頭、頭燈、後視鏡
-fill('bar', 0x2a2a2e, 19, 20, 13, 13, -3, 3);
-sym((s) => { set('mirror', 0xaab3c5, 19, 14, 3 * s); set('mirror', 0xaab3c5, 19, 15, 3 * s); });
-fill('light', 0xf3e6a1, 21, 22, 10, 12, -1, 1);
+box('tank', 0xd9342b, 14, 20, 9, 10, -1, 1);
+box('tank', 0xd9342b, 13, 13, 9, 9, -1, 1);
+box('seat', 0x2a2a2e, 7, 12, 9, 9, -1, 1);
+box('tail', 0xd9342b, 3, 6, 9, 10, -1, 1);
+box('taillight', 0xff5a4a, 2, 2, 10, 10, 0, 0);
+// 前叉：從車軸斜向後上方的一條粗 1 的斜線
+sym((sg) => shape('fork', 0xaab3c5, (x, y, z) => {
+  if (Math.abs(z - sg) > .5 || y < 3.5 || y > 12.5) return false;
+  const cx = 22 - (y - 4) * 0.3;
+  return Math.abs(x - cx) <= .5;
+}));
+box('fender', 0xd9342b, 20, 25, 9, 9, 0, 0);
+// 龍頭、後視鏡、頭燈
+box('bar', 0x2a2a2e, 19, 20, 13, 13, -3, 3);
+sym((sg) => box('mirror', 0xaab3c5, 19, 19, 14, 15, 3 * sg, 3 * sg));
+box('light', 0xf3e6a1, 21, 22, 10, 12, -1, 1);
 // 後叉與排氣管
-sym((s) => {
-  fill('swing', 0x3a3f4d, 6, 9, 3, 3, 2 * s, 2 * s);
-  fill('exhaust', 0xb8bcc6, 11, 15, 2, 2, 2 * s, 2 * s);
-  fill('exhaust', 0xb8bcc6, 10, 11, 3, 3, 2 * s, 2 * s);
-  fill('exhaust', 0xb8bcc6, 4, 10, 4, 4, 2 * s, 2 * s);
+sym((sg) => {
+  box('swing', 0x3a3f4d, 6, 9, 3, 3, 2 * sg, 2 * sg);
+  box('exhaust', 0xb8bcc6, 11, 15, 2, 2, 2 * sg, 2 * sg);
+  box('exhaust', 0xb8bcc6, 10, 11, 3, 3, 2 * sg, 2 * sg);
+  box('exhaust', 0xb8bcc6, 4, 10, 4, 4, 2 * sg, 2 * sg);
 });
 
-const cells = [...V.entries()].map(([k, v]) => ({ p: k.split(',').map(Number), ...v }));
+// 把形狀用邊長 s 的正立方體格子取樣：格子中心在形狀內就放一顆積木
+let S = 1, cells = [], V = new Map();
+function voxelize(s) {
+  S = s; V = new Map(); cells = [];
+  const n = (v) => Math.round(v / s);
+  for (let i = n(0); i <= n(27); i++) for (let j = n(-0.5); j <= n(16); j++) for (let k = n(-4); k <= n(4); k++) {
+    const x = i * s, y = j * s, z = k * s;
+    let hit = null;
+    for (const sh of shapes) if (sh.inside(x, y, z)) hit = sh; // 後定義的蓋掉先前的
+    if (hit) V.set(i + ',' + j + ',' + k, { idx: [i, j, k], p: [x, y, z], part: hit.part, color: hit.color });
+  }
+  cells = [...V.values()];
+}
 
 // ───────── 2. 積木 → 分塊 → 每塊取角點做凸包 ─────────
-// 同一部位、落在同一個 k×k×k 區塊的積木合成一個凸包。
-// k=1 等於原本的小立方體；k 越大，凸包越大塊、面越少，也越「平滑」。
+// 同一部位、落在同一個 k×k×k（積木數）區塊的積木合成一個凸包。
+// 只取有露出表面的積木的角點，內部的不影響凸包。
 function buildHulls(k) {
   const chunks = new Map();
+  const has = (i, j, l) => V.has(i + ',' + j + ',' + l);
   for (const c of cells) {
-    const key = c.part + '|' + (k >= 10 ? '' : c.p.map((v) => Math.floor((v + 0.5) / k)).join(','));
+    const [i, j, l] = c.idx;
+    if (has(i + 1, j, l) && has(i - 1, j, l) && has(i, j + 1, l) && has(i, j - 1, l) && has(i, j, l + 1) && has(i, j, l - 1)) continue;
+    const key = c.part + '|' + (k >= 10 ? '' : c.idx.map((v) => Math.floor((v + 0.5) / k)).join(','));
     let g = chunks.get(key);
     if (!g) chunks.set(key, (g = { color: c.color, pts: [] }));
-    const [x, y, z] = c.p;
+    const h = S / 2, [x, y, z] = c.p;
     // 輪圈/輪轂的側面與輪胎共面，稍微往外推一點避免 z-fighting
     const zs = /Hub$/.test(c.part) ? 1.02 : /Rim$/.test(c.part) ? 1.01 : 1;
-    for (const dx of [-0.5, 0.5]) for (const dy of [-0.5, 0.5]) for (const dz of [-0.5, 0.5]) g.pts.push([x + dx, y + dy, (z + dz) * zs]);
+    for (const dx of [-h, h]) for (const dy of [-h, h]) for (const dz of [-h, h]) g.pts.push([x + dx, y + dy, (z + dz) * zs]);
   }
   return [...chunks.values()].map((g) => ({ color: g.color, hull: Hull.convexHull(g.pts) }));
 }
@@ -111,25 +126,17 @@ const world = new THREE.Group(); world.position.set(-13, 0, 0); scene.add(world)
 const blockRoot = new THREE.Group(), polyRoot = new THREE.Group();
 world.add(blockRoot, polyRoot);
 
-// 積木版：InstancedMesh 方塊 + 上方凸點(stud)
-{
-  const cube = new THREE.InstancedMesh(new THREE.BoxGeometry(0.96, 0.96, 0.96), new THREE.MeshStandardMaterial({ roughness: 0.6 }), cells.length);
-  const tops = cells.filter((c) => !V.has(`${c.p[0]},${c.p[1] + 1},${c.p[2]}`));
-  const stud = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.28, 0.28, 0.16, 14), new THREE.MeshStandardMaterial({ roughness: 0.6 }), tops.length);
+function rebuildBlocks() {
+  blockRoot.children.slice().forEach((o) => { blockRoot.remove(o); o.geometry.dispose(); o.dispose && o.dispose(); });
+  const cube = new THREE.InstancedMesh(new THREE.BoxGeometry(S * 0.96, S * 0.96, S * 0.96), new THREE.MeshStandardMaterial({ roughness: 0.6 }), cells.length);
   const m = new THREE.Matrix4(), col = new THREE.Color();
   cells.forEach((c, i) => {
     m.makeTranslation(...c.p); cube.setMatrixAt(i, m);
-    cube.setColorAt(i, col.set(c.color).offsetHSL(0, 0, (Math.random() - 0.5) * 0.05));
+    cube.setColorAt(i, col.set(c.color).offsetHSL(0, 0, (Math.random() - 0.5) * 0.06));
   });
-  tops.forEach((c, i) => {
-    m.makeTranslation(c.p[0], c.p[1] + 0.52, c.p[2]); stud.setMatrixAt(i, m);
-    stud.setColorAt(i, col.set(c.color));
-  });
-  blockRoot.add(cube, stud);
+  blockRoot.add(cube);
 }
 
-// 凸包版：重建函式（slider 變動時呼叫）
-let info = '';
 function rebuildPoly(k) {
   polyRoot.children.slice().forEach((o) => { polyRoot.remove(o); o.geometry.dispose(); });
   const hulls = buildHulls(k);
@@ -152,9 +159,9 @@ function rebuildPoly(k) {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.75, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
   const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(lines, 3));
   polyRoot.add(new THREE.Mesh(geo, mat), new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22 })));
-  info = `${cells.length} 顆積木 → ${hulls.length} 個凸包，${nV} 頂點 / ${nP} 面 / ${pos.length / 9} 三角形`;
-  document.getElementById('info').textContent = info + '　｜　拖曳旋轉、滾輪縮放';
-  document.getElementById('kv').textContent = k >= 10 ? '整個部位' : k + '×' + k + '×' + k;
+  document.getElementById('info').textContent =
+    `${cells.length} 顆正立方體積木（邊長 ${+S.toFixed(3)}）→ ${hulls.length} 個凸包，${nV} 頂點 / ${nP} 面 / ${pos.length / 9} 三角形　｜　拖曳旋轉、滾輪縮放`;
+  document.getElementById('kv').textContent = k >= 10 ? '整個部位' : k + '×' + k + '×' + k + ' 顆';
   applyMode();
 }
 
@@ -169,9 +176,11 @@ function applyMode() {
 }
 document.querySelectorAll('[data-mode]').forEach((b) => (b.onclick = () => { mode = b.dataset.mode; applyMode(); }));
 document.getElementById('spin').onclick = (e) => { spin = !spin; e.target.classList.toggle('on', spin); };
-const ks = document.getElementById('k');
+const ks = document.getElementById('k'), rs = document.getElementById('res');
 ks.oninput = () => rebuildPoly(+ks.value);
-rebuildPoly(+ks.value);
+function rebuildAll() { voxelize(+rs.value); rebuildBlocks(); rebuildPoly(+ks.value); }
+rs.onchange = rebuildAll;
+rebuildAll();
 
 let yaw = -0.6, pitch = 0.25, dist = 44, drag = null;
 const el = renderer.domElement;
