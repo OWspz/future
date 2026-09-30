@@ -1,0 +1,707 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>潮間搏魚</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=Noto+Sans+TC:wght@500;700;900&display=swap" rel="stylesheet">
+<style>
+/* Layout: full-bleed dusk-harbor canvas, HUD pinned to the edges, overlays as one centred card. Single dark look by choice. */
+:root{
+  color-scheme: dark;
+  --night:#0b1a24; --panel:rgba(9,22,31,.86); --foam:#eaf1ec; --dim:#93aab3;
+  --lure:#ff6a3d; --line:#f3d9a4; --good:#6fdc9a; --warn:#ffc64a; --bad:#ff4d5e;
+  --f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-num:"Chakra Petch","Noto Sans TC",ui-monospace,monospace;
+}
+html,body{height:100%}
+[hidden]{display:none!important}
+body{background:var(--night);color:var(--foam);font-family:var(--f-body);overflow:hidden;
+  touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+#cv{position:fixed;inset:0;width:100%;height:100%;display:block}
+#prompt{position:fixed;left:0;right:0;top:calc(env(safe-area-inset-top,0px) + 14px);text-align:center;
+  padding-inline:16px;pointer-events:none;display:grid;gap:4px;justify-items:center}
+#pMain{font-weight:900;font-size:clamp(20px,5.4vw,30px);letter-spacing:.02em;text-wrap:balance;
+  text-shadow:0 2px 12px rgba(0,0,0,.6)}
+#pSub{font-size:14px;color:var(--dim);max-width:34em;text-wrap:balance;text-shadow:0 1px 6px rgba(0,0,0,.7)}
+#prompt.good #pMain{color:var(--good)} #prompt.warn #pMain{color:var(--warn)} #prompt.bad #pMain{color:var(--bad)}
+#hudTop{position:fixed;right:16px;top:calc(env(safe-area-inset-top,0px) + 96px);display:grid;gap:6px;
+  justify-items:end;font-family:var(--f-num);pointer-events:none}
+.chip{background:var(--panel);border-radius:6px;padding:4px 10px;font-size:13px;color:var(--dim)}
+.chip b{color:var(--foam);font-size:16px;font-variant-numeric:tabular-nums}
+#modeBtn{position:fixed;left:16px;top:calc(env(safe-area-inset-top,0px) + 96px);font:500 12px var(--f-body);
+  color:var(--dim);background:var(--panel);border:1px solid rgba(147,170,179,.3);border-radius:6px;padding:5px 10px;cursor:pointer}
+#reel{position:fixed;right:18px;bottom:calc(env(safe-area-inset-bottom,0px) + 22px);width:104px;height:104px;border-radius:50%;
+  border:3px solid var(--line);background:radial-gradient(circle at 40% 35%,#2a4a5a,#0e2230);color:var(--foam);
+  font:900 18px var(--f-body);display:grid;place-content:center;line-height:1.15;cursor:pointer;touch-action:none}
+#reel small{font:500 11px var(--f-body);color:var(--dim)}
+#reel.on{background:radial-gradient(circle at 40% 35%,#ff8a5f,#b3401f);border-color:#ffd2b8}
+#dbg{position:fixed;left:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 4px);font:500 11px var(--f-num);color:var(--dim);
+  opacity:.7;pointer-events:none;font-variant-numeric:tabular-nums}
+.overlay{position:fixed;inset:0;display:grid;place-items:center;padding-inline:16px;background:rgba(5,12,18,.55);
+  backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.card{box-sizing:border-box;width:min(420px,100%);background:var(--panel);border:1px solid rgba(243,217,164,.18);border-radius:14px;
+  padding:22px 20px;display:grid;gap:14px;max-height:calc(100% - 32px);overflow:auto;touch-action:pan-y}
+.eyebrow{margin:0;font:700 12px var(--f-num);letter-spacing:.18em;color:var(--lure);text-transform:uppercase}
+.card h1,.card h2{margin:0;font-weight:900;text-wrap:balance}
+.card h1{font-size:34px;letter-spacing:.04em}
+.card h2{font-size:28px}
+.card p{margin:0;line-height:1.6;color:var(--dim)}
+.steps{margin:0;padding-left:1.3em;display:grid;gap:6px;line-height:1.55;font-size:14px}
+.steps b{color:var(--foam)}
+.btns{display:grid;gap:10px}
+button.primary,button.ghost{font:700 16px var(--f-body);padding:13px 16px;border-radius:10px;cursor:pointer}
+button.primary{background:var(--lure);color:#1b0c05;border:0}
+button.ghost{background:transparent;color:var(--foam);border:1px solid rgba(234,241,236,.3)}
+button:focus-visible{outline:3px solid var(--warn);outline-offset:2px}
+.big{font:700 44px var(--f-num)!important;color:var(--foam)!important;line-height:1!important}
+.big small{font-size:18px;color:var(--dim)}
+dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
+dt{color:var(--dim)} dd{margin:0;text-align:right;font-family:var(--f-num);font-variant-numeric:tabular-nums}
+.note{font-size:12px!important}
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 140px);
+  background:var(--panel);border:1px solid rgba(255,198,74,.4);color:var(--warn);padding:8px 14px;border-radius:8px;
+  font-size:13px;width:max-content;max-width:calc(100% - 32px);text-align:center}
+@media (prefers-reduced-motion: reduce){ #prompt{transition:none} }
+</style>
+</head><body>
+
+<canvas id="cv"></canvas>
+<div id="prompt"><div id="pMain"></div><div id="pSub"></div></div>
+<div id="hudTop" hidden>
+  <div class="chip">距離 <b id="hDist">0</b> m</div>
+  <div class="chip" id="hFishChip" hidden>魚體力 <b id="hStam">100</b>%</div>
+</div>
+<button id="modeBtn" hidden>操作：體感</button>
+<button id="reel" hidden>收線<small>按住</small></button>
+<div id="dbg"></div>
+<div id="toast" hidden></div>
+
+<div class="overlay" id="intro">
+  <div class="card">
+    <p class="eyebrow">Tide Fight · 體感釣魚</p>
+    <h1>潮間搏魚</h1>
+    <p>把手機當成釣竿握在手上。直立握好、往後蓄力、往前甩出，等浮標被拉下去再猛力提竿，接著靠竿子角度和收線跟魚拉扯。</p>
+    <ol class="steps">
+      <li><b>拋竿</b>：手機直立 → 往後舉 → 快速往前甩，停在略高於水平（10°–45°）</li>
+      <li><b>等待</b>：浮標輕點是試探，被整個拉下去時手機會長震，<b>立刻往上提</b></li>
+      <li><b>搏魚</b>：舉竿施壓消耗魚體力，魚衝刺時放低竿子別收線；魚往哪邊跑，竿子往反方向傾</li>
+      <li><b>收線</b>：按住右下角按鈕，張力別爆表也別太鬆</li>
+    </ol>
+    <div class="btns">
+      <button class="primary" id="btnSensor">啟用體感開始（手機）</button>
+      <button class="ghost" id="btnPointer">用滑鼠／觸控玩</button>
+    </div>
+    <p class="note">滑鼠模式：上下移動滑鼠＝竿子角度，左右＝側壓，快速往下拖＝甩竿，快速往上＝提竿，按住空白鍵或按鈕＝收線。iPhone 的網頁不支援震動，會改用畫面震動提示。</p>
+  </div>
+</div>
+
+<div class="overlay" id="result" hidden>
+  <div class="card">
+    <p class="eyebrow" id="rTag">釣獲</p>
+    <h2 id="rTitle"></h2>
+    <p class="big" id="rBig"></p>
+    <dl id="rStats"></dl>
+    <p class="note" id="rNote"></p>
+    <div class="btns"><button class="primary" id="btnAgain">再拋一竿</button></div>
+  </div>
+</div>
+
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const cv = $('#cv'), ctx = cv.getContext('2d');
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const rand = (a, b) => a + Math.random() * (b - a);
+const DEG = Math.PI / 180;
+let W = 0, H = 0;
+function resize() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+/* ---------------- 輸入層：感測器或滑鼠都轉成「竿角 theta / 側傾 side / 角速度 speed」 ---------------- */
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const inp = {
+  mode: 'demo', theta: 80, side: 0, speed: 0, rot: 0, lin: 0, reel: false,
+  sign: isIOS ? -1 : 1, hist: [], gotMotion: false, stillT: 0
+};
+function pushTheta(th, t) {
+  inp.hist.push({ t, th });
+  while (inp.hist.length > 2 && t - inp.hist[0].t > 400) inp.hist.shift();
+}
+function dTheta(ms) {
+  const h = inp.hist; if (h.length < 2) return 0;
+  const last = h[h.length - 1]; let i = h.length - 1;
+  while (i > 0 && last.t - h[i].t < ms) i--;
+  const dt = (last.t - h[i].t) / 1000;
+  return dt > 0.012 ? (last.th - h[i].th) / dt : 0;
+}
+function onMotion(e) {
+  const g = e.accelerationIncludingGravity;
+  if (!g || g.x == null) return;
+  inp.gotMotion = true;
+  if (inp.mode !== 'sensor') return;
+  const r = e.rotationRate;
+  inp.rot = r ? Math.hypot(r.alpha || 0, r.beta || 0, r.gamma || 0) : 0;
+  const a = e.acceleration;
+  inp.lin = a && a.x != null ? Math.hypot(a.x, a.y, a.z) : 0;
+  // 直立靜止時自動校正座標方向（iOS 與 Android 的重力符號相反）
+  if (game.state === 'ready' && Math.abs(g.y) > 8.3 && Math.abs(g.z) < 4 && inp.rot < 40) inp.sign = Math.sign(g.y);
+  const s = inp.sign;
+  // theta：竿尖相對前方水平的仰角。直立 90°，平放螢幕朝上 0°，往後倒超過 90°
+  let th = Math.atan2(s * g.y, s * g.z) / DEG;
+  if (th < -140) th += 360;
+  inp.theta = lerp(inp.theta, th, 0.45);
+  inp.side = clamp(-s * g.x / 9.81 * 1.5, -1, 1);
+  pushTheta(inp.theta, performance.now());
+}
+addEventListener('devicemotion', onMotion);
+
+let rodPointer = null;
+function pointerTheta(e) {
+  if (inp.mode !== 'pointer') return;
+  inp.theta = 140 - (e.clientY / H) * 170;
+  inp.side = clamp((e.clientX / W) * 2 - 1, -1, 1);
+  pushTheta(inp.theta, performance.now());
+}
+cv.addEventListener('pointerdown', e => { rodPointer = e.pointerId; pointerTheta(e); });
+cv.addEventListener('pointermove', e => {
+  if (e.pointerType === 'mouse' || e.pointerId === rodPointer) pointerTheta(e);
+});
+addEventListener('pointerup', e => { if (e.pointerId === rodPointer) rodPointer = null; });
+
+const reelBtn = $('#reel');
+const setReel = v => { inp.reel = v; reelBtn.classList.toggle('on', v); };
+reelBtn.addEventListener('pointerdown', e => { e.preventDefault(); reelBtn.setPointerCapture(e.pointerId); setReel(true); });
+['pointerup', 'pointercancel', 'lostpointercapture'].forEach(n => reelBtn.addEventListener(n, () => setReel(false)));
+addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); setReel(true); } });
+addEventListener('keyup', e => { if (e.code === 'Space') setReel(false); });
+
+function computeSpeed(now) {
+  const h = inp.hist;
+  if (!h.length || now - h[h.length - 1].t > 150) { inp.speed = 0; return; }
+  let sp = dTheta(70);
+  if (inp.mode === 'sensor' && inp.rot > Math.abs(sp) && Math.abs(sp) > 60) sp = Math.sign(sp) * Math.min(inp.rot, Math.abs(sp) * 2.5);
+  inp.speed = sp;
+}
+
+/* ---------------- 震動（沒有震動時用畫面震動代替） ---------------- */
+const canVib = typeof navigator.vibrate === 'function';
+let shake = 0;
+function vib(p) {
+  if (canVib) { try { navigator.vibrate(p); } catch (_) {} }
+  const total = Array.isArray(p) ? p.reduce((s, v, i) => s + (i % 2 ? 0 : v), 0) : p;
+  shake = Math.max(shake, Math.min(12, total / 25));
+}
+
+/* ---------------- 魚種 ---------------- */
+const FISH = [
+  { name: '吳郭魚', w: [0.3, 1.2], str: 0.38, end: 7, minD: 0, rar: 30, col: '#6f7d5e' },
+  { name: '黑鯛', w: [0.5, 2.5], str: 0.55, end: 10, minD: 10, rar: 24, col: '#3b4852' },
+  { name: '七星鱸', w: [1, 4.5], str: 0.65, end: 12, minD: 18, rar: 18, col: '#98a4ab' },
+  { name: '紅甘', w: [3, 9], str: 0.8, end: 15, minD: 28, rar: 12, col: '#c9a14a' },
+  { name: '鬼頭刀', w: [5, 15], str: 0.9, end: 17, minD: 36, rar: 8, col: '#4fb06d' },
+  { name: '黃鰭鮪', w: [12, 40], str: 1.0, end: 21, minD: 46, rar: 4, col: '#e3c23a' },
+];
+function pickFish(dist) {
+  const pool = FISH.filter(f => f.minD <= dist);
+  let r = Math.random() * pool.reduce((s, f) => s + f.rar, 0);
+  const sp = pool.find(f => (r -= f.rar) < 0) || pool[0];
+  const wf = Math.pow(Math.random(), 1.6);
+  const weight = lerp(sp.w[0], sp.w[1], wf);
+  return { ...sp, weight, wf, strength: sp.str * (0.85 + 0.3 * wf), endurance: sp.end * (0.8 + 0.5 * wf),
+    stam: 1, beh: 'struggle', behT: 1.5, pull: 0.5, pullTarget: 0.5, dir: 0, dirTarget: 0, x: 0 };
+}
+
+/* ---------------- 遊戲狀態 ---------------- */
+const game = { state: 'intro', stateT: 0, cast: null, fish: null, dist: 0, tension: 0, bob: null,
+  holdT: 0, msgT: 0, overT: 0, slackT: 0, maxT: 0, buzzT: 0, reaction: 0, splashes: [] };
+function setState(s) { game.state = s; game.stateT = 0; }
+const pr = $('#prompt'), pMain = $('#pMain'), pSub = $('#pSub');
+function prompt(main, sub = '', tone = '') {
+  if (pMain.textContent !== main) pMain.textContent = main;
+  if (pSub.textContent !== sub) pSub.textContent = sub;
+  pr.className = tone;
+}
+let toastTimer = 0;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 4200); }
+
+function toReady() {
+  game.bob = null; game.fish = null; game.tension = 0; game.holdT = 0; setReel(false);
+  reelBtn.hidden = true; $('#hudTop').hidden = true; $('#hFishChip').hidden = true;
+  setState('ready');
+}
+function miss(main, sub) { vib([80, 60, 80]); game.missMsg = [main, sub]; setState('miss'); }
+
+function evaluateCast() {
+  const c = game.cast;
+  const peak = c.peak * (inp.mode === 'pointer' ? 0.6 : 1);
+  const rel = inp.theta;
+  c.release = rel; c.peakAdj = peak;
+  if (peak < 260) return miss('甩竿力道不足', '手腕要「甩」出去，不是慢慢放下');
+  if (rel < -25) return miss('甩得太低', '釣組砸在腳邊了，停竿時竿尖要略高於水平');
+  if (rel > 75) return miss('出手太早', '竿子還沒往前就停住了，要甩到前方再停');
+  const power = clamp((peak - 200) / 600, 0, 1.6);
+  const angleQ = rel >= 10 && rel <= 45 ? 1 : rel < 10 ? clamp(1 - (10 - rel) / 35, 0, 1) : clamp(1 - (rel - 45) / 30, 0, 1);
+  const p = Math.min(power, 1), over = power > 1.35;
+  let score = p * angleQ * (c.back ? 1 : 0.8);
+  if (over) score *= 0.85;
+  c.score = score;
+  c.dist = 6 + 54 * score;
+  c.grade = score >= 0.8 ? '完美拋投' : score >= 0.55 ? '漂亮' : score >= 0.3 ? '普通' : '偏弱';
+  const notes = [];
+  if (!c.back) notes.push('沒有往後蓄力');
+  if (angleQ < 1) notes.push(rel < 10 ? '停竿偏低' : '停竿偏高');
+  if (over) notes.push('太用力，線有點亂');
+  else if (p < 0.6) notes.push('力道可以再大一點');
+  c.notes = notes;
+  vib(score >= 0.8 ? [30, 40, 30, 40, 60] : 40);
+  const tip = rodTip();
+  game.bob = { sx: tip.x, sy: tip.y, lat: clamp(inp.side * 0.6, -0.6, 0.6), d: c.dist, t: 0, sink: 0, tw: 0 };
+  setState('flight');
+}
+
+function startFight() {
+  const f = game.fish = pickFish(game.cast.dist);
+  f.x = game.bob.lat;
+  game.dist = game.cast.dist; game.tension = 35; game.overT = 0; game.slackT = 0; game.maxT = 0; game.buzzT = 0;
+  reelBtn.hidden = false; $('#hudTop').hidden = false; $('#hFishChip').hidden = false;
+  vib([60, 40, 200]);
+  setState('fight');
+}
+function nextBehavior(f) {
+  const r = Math.random() * (0.3 + 0.4 + 0.3 * (0.3 + f.stam));
+  if (r < 0.3 + (1 - f.stam) * 0.3) { f.beh = 'rest'; f.pullTarget = rand(0.12, 0.25); f.dirTarget = f.dir * 0.3; f.behT = rand(1.6, 3.2); }
+  else if (r < 0.7) { f.beh = 'struggle'; f.pullTarget = rand(0.45, 0.65); f.dirTarget = rand(-0.5, 0.5); f.behT = rand(1.4, 3); }
+  else { f.beh = 'rush'; f.pullTarget = rand(0.85, 1); f.dirTarget = (Math.random() < 0.5 ? -1 : 1) * rand(0.6, 1); f.behT = rand(1.2, 2.4); vib(140); }
+  if (Math.random() < 0.28) { f.shakeT = 0.5; game.tension += 14; vib([50, 40, 50, 40, 50]); }
+}
+function endFight(caught, why) {
+  const f = game.fish, c = game.cast;
+  setReel(false); reelBtn.hidden = true;
+  $('#rTag').textContent = caught ? '釣獲' : '跑掉了';
+  $('#rTitle').textContent = caught ? f.name : why;
+  const rows = [];
+  if (caught) {
+    $('#rBig').innerHTML = f.weight.toFixed(2) + ' <small>kg</small>';
+    let best = 0, total = 0;
+    try {
+      const log = JSON.parse(localStorage.getItem('tidefight-log') || '[]');
+      best = Math.max(0, ...log.filter(x => x.n === f.name).map(x => x.w));
+      log.push({ n: f.name, w: +f.weight.toFixed(2) });
+      localStorage.setItem('tidefight-log', JSON.stringify(log.slice(-200)));
+      total = log.length;
+    } catch (_) {}
+    $('#rNote').textContent = total ? `累計釣獲 ${total} 條` + (f.weight > best ? (best ? `，刷新${f.name}紀錄（原 ${best} kg）` : '，第一次釣到這種魚') : `，${f.name}最佳 ${best} kg`) : '';
+    vib([100, 60, 100, 60, 300]);
+  } else {
+    $('#rBig').textContent = f ? `上鉤的是 ${f.name}` : '';
+    $('#rNote').textContent = '';
+  }
+  rows.push(['拋投', `${c.grade}・${c.dist.toFixed(1)} m`]);
+  rows.push(['出手速度 / 停竿角', `${Math.round(c.peakAdj)}°/s ・ ${Math.round(c.release)}°`]);
+  if (c.notes.length) rows.push(['拋投建議', c.notes.join('、')]);
+  rows.push(['提竿反應', `${Math.round(game.reaction * 1000)} ms`]);
+  rows.push(['搏魚時間', `${game.stateT.toFixed(1)} 秒`]);
+  rows.push(['最高張力', `${Math.round(game.maxT)}%`]);
+  $('#rStats').innerHTML = rows.map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('');
+  setState('result');
+  $('#result').hidden = false;
+}
+
+/* ---------------- 每幀更新 ---------------- */
+function update(dt, now) {
+  computeSpeed(now);
+  game.stateT += dt;
+  const th = inp.theta, sp = inp.speed;
+  switch (game.state) {
+    case 'intro': {
+      inp.theta = 70 + Math.sin(now / 900) * 25;
+      break;
+    }
+    case 'ready': {
+      prompt('直立握竿', inp.mode === 'pointer' ? '把游標移到畫面中間偏上，停住一下' : '手機直立、螢幕朝向自己，像握住釣竿');
+      if (th > 58 && th < 125 && Math.abs(sp) < 70) game.holdT += dt; else game.holdT = 0;
+      if (game.holdT > 0.6) { game.cast = { back: false, maxBack: th, peak: 0 }; vib(25); setState('armed'); }
+      break;
+    }
+    case 'armed': {
+      const c = game.cast;
+      c.maxBack = Math.max(c.maxBack, th);
+      if (th >= 100) c.back = true;
+      prompt(c.back ? '蓄力完成，往前甩！' : '往後舉竿蓄力', c.back ? '快速往前甩，停在略高於水平' : '竿尖往後倒超過直立，再用力往前甩', c.back ? 'good' : '');
+      if (sp < -200) { c.peak = -sp; c.swingT = 0; setState('swinging'); }
+      else if (th < 35 && game.stateT > 0.4) miss('動作太慢', '要一口氣「甩」出去，不是慢慢放下');
+      break;
+    }
+    case 'swinging': {
+      const c = game.cast;
+      c.peak = Math.max(c.peak, -sp);
+      prompt('出竿！', '', 'good');
+      if (th > 110) setState('armed');
+      else if ((sp > -90 && th < 75) || game.stateT > 0.9) setState('release');
+      break;
+    }
+    case 'release': {
+      if (game.stateT > 0.12) evaluateCast();
+      break;
+    }
+    case 'flight': {
+      const b = game.bob, c = game.cast;
+      b.t = clamp(game.stateT / 1.1, 0, 1);
+      prompt(c.grade + `　${c.dist.toFixed(1)} m`, c.notes.join('・') || '出手角度和力道都到位', c.score >= 0.55 ? 'good' : 'warn');
+      if (b.t >= 1) {
+        vib(30); splash(b.d, b.lat, 10);
+        game.biteAt = rand(3, 8) * (c.score > 0.8 ? 0.8 : 1);
+        const n = Math.floor(rand(0, 3.99));
+        game.nibbles = Array.from({ length: n }, () => rand(0.8, game.biteAt - 0.7)).sort((a, b) => a - b);
+        setState('wait');
+      }
+      break;
+    }
+    case 'wait': {
+      const b = game.bob;
+      prompt('等待咬餌…', '浮標輕點是試探，別急著提竿');
+      b.tw = Math.max(0, b.tw - dt);
+      if (game.nibbles.length && game.stateT >= game.nibbles[0]) { game.nibbles.shift(); vib(35); b.tw = 0.35; }
+      if (sp > 220 && game.stateT > 0.8) { miss('太早提竿', '魚只是試探，等浮標整個被拉下去再提'); break; }
+      if (game.stateT >= game.biteAt) { vib([220, 70, 220, 70, 380]); setState('bite'); }
+      break;
+    }
+    case 'bite': {
+      const b = game.bob;
+      b.sink = Math.min(1, b.sink + dt * 4);
+      prompt('咬餌了！往上提竿！', '', 'bad');
+      if (sp > 220) { game.reaction = game.stateT; startFight(); }
+      else if (game.stateT > 1.3) miss('太慢了', '魚把餌吃掉跑了，長震一來就要提竿');
+      break;
+    }
+    case 'fight': fightStep(dt); break;
+    case 'miss': {
+      prompt(game.missMsg[0], game.missMsg[1], 'bad');
+      if (game.stateT > 2.4) toReady();
+      break;
+    }
+  }
+  shake = Math.max(0, shake - dt * 30);
+  game.splashes = game.splashes.filter(p => (p.life -= dt) > 0);
+}
+
+function fightStep(dt) {
+  const f = game.fish;
+  f.behT -= dt; if (f.behT <= 0) nextBehavior(f);
+  f.shakeT = Math.max(0, (f.shakeT || 0) - dt);
+  f.pull = lerp(f.pull, f.pullTarget, Math.min(1, dt * 3));
+  f.dir = lerp(f.dir, f.dirTarget, Math.min(1, dt * 2));
+  f.x = clamp(f.x + f.dir * dt * 0.35 * (f.beh === 'rush' ? 1 : 0.4), -1, 1);
+  const effPull = f.pull * f.strength * (0.35 + 0.65 * f.stam);
+  const rodF = clamp((inp.theta - 10) / 80, 0.15, 1.15);
+  const reel = inp.reel ? 1 : 0;
+  const err = Math.max(0, f.dir * inp.side);       // 竿子倒向魚跑的方向＝不利
+  const counter = Math.max(0, -f.dir * inp.side);  // 反向側壓＝有利
+  const target = 100 * (effPull * (0.4 + 0.7 * rodF) + reel * (0.22 + 0.5 * effPull) + 0.35 * err * effPull) + (f.shakeT > 0 ? 18 : 0);
+  game.tension = lerp(game.tension, target, Math.min(1, dt * 5));
+  game.maxT = Math.max(game.maxT, game.tension);
+  const T = game.tension;
+  const gain = reel && T < 92 ? dt * 3.2 * (1 - 0.55 * effPull) : 0;
+  const run = f.beh === 'rush' ? dt * 6 * effPull * (1.1 - 0.5 * rodF) : dt * 0.5 * effPull;
+  game.dist = Math.max(0, game.dist + run - gain);
+  f.stam = Math.max(0, f.stam - dt * (T / 100) * (0.5 + 0.8 * rodF) * (1 + 0.8 * counter) / f.endurance);
+  if (f.beh === 'rush' && Math.random() < dt * 3) splash(game.dist, f.x, 4);
+
+  // 震動回饋：張力越高，脈衝越密越長
+  game.buzzT -= dt;
+  if (game.buzzT <= 0) {
+    const k = clamp(T / 100, 0, 1.2);
+    vib(T > 92 ? 70 : Math.round(12 + k * 38));
+    game.buzzT = T > 92 ? 0.12 : lerp(0.8, 0.12, Math.min(k, 1));
+  }
+
+  if (T >= 100) game.overT += dt; else game.overT = Math.max(0, game.overT - dt * 2);
+  if (T < 10) game.slackT += dt; else game.slackT = 0;
+
+  if (T > 85) prompt('張力太高！', '放低竿子、放開收線', 'bad');
+  else if (T < 15) prompt('線太鬆了！', '舉竿或收線，別讓魚脫鉤', 'warn');
+  else if (f.beh === 'rush') prompt('魚在衝刺', Math.abs(f.dir) > 0.35 ? `魚往${f.dir < 0 ? '左' : '右'}跑，竿子往${f.dir < 0 ? '右' : '左'}壓` : '別硬拉，竿子放低一點', 'warn');
+  else if (f.beh === 'rest') prompt('魚累了，收線！', '按住收線，竿子舉高施壓', 'good');
+  else prompt('穩住，舉竿施壓', '保持張力在中間綠色區，慢慢消耗魚的體力');
+
+  $('#hDist').textContent = game.dist.toFixed(1);
+  $('#hStam').textContent = Math.round(f.stam * 100);
+
+  if (game.overT > 0.6) endFight(false, '斷線了');
+  else if (game.slackT > 2.5) endFight(false, '魚脫鉤了');
+  else if (game.dist > 90) endFight(false, '線被拉光了');
+  else if (game.dist <= 1.5) endFight(true);
+}
+
+/* ---------------- 繪圖 ---------------- */
+const hz = () => H * 0.38;
+function proj(d, lat) {
+  const k = 7 / (7 + d);
+  return { x: W * 0.5 + lat * W * 0.55 * k, y: hz() + (H * 0.97 - hz()) * k, k };
+}
+function splash(d, lat, n) {
+  const p = proj(d, lat);
+  for (let i = 0; i < n; i++) game.splashes.push({ x: p.x, y: p.y, vx: rand(-40, 40) * p.k * 3, vy: rand(-90, -30) * p.k * 3, life: rand(0.4, 0.8), max: 0.8 });
+}
+function rodGeom() {
+  const px = W * 0.72, py = H + 30;
+  const th = clamp(inp.theta, -40, 170);
+  const L = Math.min(H * 0.62, W * 1.05) * (0.38 + 0.62 * Math.abs(Math.sin(th * DEG)));
+  const sa = (90 + (90 - th) * 0.45 - inp.side * 28) * DEG;
+  return { px, py, L, sa, tx: px + Math.cos(sa) * L, ty: py - Math.sin(sa) * L };
+}
+function lineTarget() {
+  const s = game.state, b = game.bob;
+  if (s === 'flight' && b) {
+    const end = proj(b.d, b.lat);
+    const t = b.t;
+    return { x: lerp(b.sx, end.x, t), y: lerp(b.sy, end.y, t) - Math.sin(t * Math.PI) * H * 0.35, k: end.k, air: true };
+  }
+  if ((s === 'wait' || s === 'bite') && b) return proj(b.d, b.lat);
+  if (s === 'fight' && game.fish) return proj(game.dist, game.fish.x);
+  if (s === 'result' && game.fish && game.dist <= 1.5) return proj(1.5, game.fish.x);
+  return null;
+}
+function rodTip() {
+  const g = rodGeom(), tgt = lineTarget();
+  const bend = game.state === 'fight' ? game.tension / 100 : 0.05;
+  let tx = g.tx, ty = g.ty;
+  if (tgt) { tx = lerp(g.tx, tgt.x, bend * 0.18); ty = lerp(g.ty, tgt.y, bend * 0.25); }
+  return { x: tx, y: ty, g };
+}
+
+function draw(now) {
+  const t = now / 1000;
+  ctx.save();
+  if (shake > 0) ctx.translate(rand(-shake, shake), rand(-shake, shake));
+  const H0 = hz();
+  // 天空
+  let g = ctx.createLinearGradient(0, 0, 0, H0);
+  g.addColorStop(0, '#10283a'); g.addColorStop(0.6, '#3b3f5c'); g.addColorStop(1, '#e98a5a');
+  ctx.fillStyle = g; ctx.fillRect(-20, -20, W + 40, H0 + 20);
+  const sunX = W * 0.28;
+  g = ctx.createRadialGradient(sunX, H0, 4, sunX, H0, 160);
+  g.addColorStop(0, 'rgba(255,214,150,.9)'); g.addColorStop(1, 'rgba(255,140,90,0)');
+  ctx.fillStyle = g; ctx.fillRect(sunX - 160, H0 - 160, 320, 160);
+  ctx.fillStyle = '#ffd9a0'; ctx.beginPath(); ctx.arc(sunX, H0, 26, Math.PI, 0); ctx.fill();
+  // 遠方堤防燈
+  ctx.fillStyle = '#1a2a38'; ctx.fillRect(W * 0.62, H0 - 10, W * 0.4, 10);
+  ctx.fillStyle = '#ffcf7a';
+  for (let i = 0; i < 6; i++) ctx.fillRect(W * 0.64 + i * W * 0.06, H0 - 14 - (i % 2) * 3, 2, 3);
+  // 海面
+  g = ctx.createLinearGradient(0, H0, 0, H);
+  g.addColorStop(0, '#2c4a5e'); g.addColorStop(0.3, '#16394b'); g.addColorStop(1, '#0a2130');
+  ctx.fillStyle = g; ctx.fillRect(-20, H0, W + 40, H - H0 + 20);
+  // 夕陽倒影
+  for (let i = 0; i < 26; i++) {
+    const y = H0 + Math.pow(i / 26, 1.7) * (H - H0);
+    const w = (20 + i * 5) * (0.7 + 0.3 * Math.sin(t * 2 + i));
+    ctx.fillStyle = `rgba(255,190,130,${0.28 * (1 - i / 26)})`;
+    ctx.fillRect(sunX - w / 2 + Math.sin(t + i) * 6, y, w, 2 + i * 0.12);
+  }
+  // 波紋
+  ctx.strokeStyle = 'rgba(200,230,235,.10)'; ctx.lineWidth = 1;
+  for (let d = 1; d < 80; d *= 1.18) {
+    const p = proj(d, 0);
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 16) {
+      const y = p.y + Math.sin(x * 0.02 / p.k + t * 1.5 + d) * 2 * p.k;
+      x ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // 魚影
+  if ((game.state === 'fight' || (game.state === 'result' && game.dist <= 1.5)) && game.fish) {
+    const f = game.fish, p = proj(game.dist, f.x);
+    const len = (26 + f.weight * 3.2) * p.k * 3;
+    ctx.save(); ctx.translate(p.x, p.y + 6 * p.k);
+    ctx.rotate(f.dir * 0.5);
+    ctx.fillStyle = 'rgba(4,14,20,.55)';
+    ctx.beginPath(); ctx.ellipse(0, 0, len / 2, len / 6, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-len / 2, 0); ctx.lineTo(-len / 2 - len / 5, -len / 7 + Math.sin(t * 14) * len / 14); ctx.lineTo(-len / 2 - len / 5, len / 7); ctx.fill();
+    ctx.restore();
+  }
+
+  // 浮標
+  const b = game.bob;
+  if (b && game.state !== 'flight' && (game.state === 'wait' || game.state === 'bite')) {
+    const p = proj(b.d, b.lat);
+    const bobY = p.y + Math.sin(t * 2.2) * 1.5 + (b.tw > 0 ? Math.sin(b.tw * 60) * 3 : 0) + b.sink * 10 * p.k * 3;
+    const r = Math.max(3, 9 * p.k * 2.2);
+    ctx.strokeStyle = 'rgba(234,241,236,.25)';
+    ctx.beginPath(); ctx.ellipse(p.x, p.y + 1, r * 2.2, r * 0.6, 0, 0, Math.PI * 2); ctx.stroke();
+    if (b.sink < 0.95) {
+      ctx.save(); ctx.beginPath(); ctx.rect(p.x - r * 2, bobY - r * 4, r * 4, r * 4 + (p.y - bobY) + r * 0.3); ctx.clip();
+      ctx.fillStyle = '#ff6a3d'; ctx.beginPath(); ctx.ellipse(p.x, bobY - r * 0.4, r * 0.7, r, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#eaf1ec'; ctx.fillRect(p.x - 1, bobY - r * 2.6, 2, r * 1.4);
+      ctx.restore();
+    }
+  }
+
+  // 水花
+  for (const s of game.splashes) {
+    const a = s.life / s.max, age = s.max - s.life;
+    ctx.fillStyle = `rgba(234,241,236,${a})`;
+    ctx.beginPath(); ctx.arc(s.x + s.vx * age, s.y + s.vy * age + 200 * age * age, 2, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // 釣竿與釣線
+  const tip = rodTip(), rg = tip.g, tgt = lineTarget();
+  const midx = (rg.px + rg.tx) / 2, midy = (rg.py + rg.ty) / 2;
+  const cx = lerp(midx, tip.x, 0.9), cy = lerp(midy, tip.y, 0.9);
+  if (tgt) {
+    const T = game.state === 'fight' ? game.tension : (tgt.air ? 40 : 18);
+    const sag = (1 - clamp(T / 100, 0, 1)) * 70;
+    ctx.strokeStyle = game.state === 'fight' && T > 85 ? '#ff4d5e' : 'rgba(243,217,164,.85)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(tip.x, tip.y);
+    ctx.quadraticCurveTo((tip.x + tgt.x) / 2, Math.max(tip.y, tgt.y) + sag, tgt.x, tgt.y); ctx.stroke();
+    if (tgt.air) { ctx.fillStyle = '#ff6a3d'; ctx.beginPath(); ctx.arc(tgt.x, tgt.y, 4, 0, Math.PI * 2); ctx.fill(); }
+  } else {
+    ctx.strokeStyle = 'rgba(243,217,164,.8)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(tip.x, tip.y); ctx.lineTo(tip.x + 2, tip.y + 40); ctx.stroke();
+    ctx.fillStyle = '#ff6a3d'; ctx.beginPath(); ctx.arc(tip.x + 2, tip.y + 44, 4, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#1c1410'; ctx.lineWidth = 7;
+  ctx.beginPath(); ctx.moveTo(rg.px, rg.py); ctx.quadraticCurveTo(cx, cy, tip.x, tip.y); ctx.stroke();
+  ctx.strokeStyle = '#3a2a1e'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(rg.px, rg.py); ctx.quadraticCurveTo(cx, cy, tip.x, tip.y); ctx.stroke();
+  ctx.strokeStyle = '#ff6a3d'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(lerp(rg.px, tip.x, 0.93), lerp(rg.py, tip.y, 0.93)); ctx.lineTo(tip.x, tip.y); ctx.stroke();
+  const gx = lerp(rg.px, rg.tx, 0.12), gy = lerp(rg.py, rg.ty, 0.12);
+  ctx.fillStyle = '#b08a5a'; ctx.beginPath(); ctx.arc(gx, gy, 9, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#2a3a44'; ctx.beginPath(); ctx.arc(gx - 16, gy + 4, 13, 0, Math.PI * 2); ctx.fill();
+  ctx.save(); ctx.translate(gx - 16, gy + 4); ctx.rotate(inp.reel ? t * 14 : 0);
+  ctx.strokeStyle = '#93aab3'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(11, 0); ctx.stroke(); ctx.restore();
+  ctx.restore();
+
+  if (game.state !== 'intro') drawGauge();
+  if (game.state === 'fight') { drawTension(); drawSide(); }
+}
+
+// 竿角儀表：側視圖，右方是水面
+function drawGauge() {
+  const r = Math.min(58, W * 0.14), cx = 16 + r + 4, cy = H - 70 - r * 0.25;
+  const zones = {
+    ready: [[58, 125, '#6fdc9a', '直立']],
+    armed: [[100, 160, '#ffc64a', '蓄力'], [10, 45, '#6fdc9a', '停竿']],
+    swinging: [[10, 45, '#6fdc9a', '停竿']],
+    release: [[10, 45, '#6fdc9a', '停竿']],
+    wait: [[10, 50, '#6fdc9a', '竿尖']],
+    bite: [[60, 120, '#ff4d5e', '提竿']],
+    fight: [[15, 35, '#8fd3ff', '放'], [55, 100, '#ffc64a', '壓']],
+  }[game.state] || [];
+  ctx.save();
+  ctx.fillStyle = 'rgba(9,22,31,.7)';
+  ctx.beginPath(); ctx.arc(cx, cy, r + 14, 0, Math.PI * 2); ctx.fill();
+  ctx.lineWidth = 8; ctx.lineCap = 'butt';
+  ctx.strokeStyle = 'rgba(147,170,179,.25)';
+  ctx.beginPath(); ctx.arc(cx, cy, r, -170 * DEG, 40 * DEG); ctx.stroke();
+  ctx.font = '500 10px "Noto Sans TC",sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const [a0, a1, col, lab] of zones) {
+    ctx.strokeStyle = col;
+    ctx.beginPath(); ctx.arc(cx, cy, r, -a1 * DEG, -a0 * DEG); ctx.stroke();
+    const am = -(a0 + a1) / 2 * DEG;
+    ctx.fillStyle = col; ctx.fillText(lab, cx + Math.cos(am) * (r - 16), cy + Math.sin(am) * (r - 16));
+  }
+  const th = clamp(inp.theta, -40, 170);
+  let inZone = zones.some(([a0, a1]) => th >= a0 && th <= a1);
+  ctx.strokeStyle = inZone ? '#6fdc9a' : '#eaf1ec'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(-th * DEG) * (r + 6), cy + Math.sin(-th * DEG) * (r + 6)); ctx.stroke();
+  ctx.fillStyle = '#eaf1ec'; ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.font = '700 15px "Chakra Petch",monospace'; ctx.fillText(Math.round(inp.theta) + '°', cx - r * 0.35, cy + r * 0.45);
+  ctx.fillStyle = 'rgba(111,160,190,.5)'; ctx.fillRect(cx + 6, cy + r * 0.25, r, 3);
+  ctx.restore();
+}
+function drawTension() {
+  const w = 16, X = W - 16 - w, Y = H * 0.28;
+  const h = Math.max(80, Math.min(280, H - Y - 170));
+  ctx.save();
+  ctx.fillStyle = 'rgba(9,22,31,.8)'; ctx.fillRect(X - 4, Y - 4, w + 8, h + 8);
+  ctx.fillStyle = 'rgba(255,77,94,.3)'; ctx.fillRect(X, Y, w, h * 0.15);
+  ctx.fillStyle = 'rgba(143,211,255,.25)'; ctx.fillRect(X, Y + h * 0.9, w, h * 0.1);
+  const T = clamp(game.tension, 0, 110) / 110;
+  ctx.fillStyle = game.tension > 85 ? '#ff4d5e' : game.tension < 15 ? '#8fd3ff' : '#6fdc9a';
+  ctx.fillRect(X, Y + h * (1 - T), w, h * T);
+  ctx.fillStyle = '#eaf1ec'; ctx.font = '700 12px "Noto Sans TC",sans-serif'; ctx.textAlign = 'right';
+  ctx.fillText('張力', X - 8, Y + 10);
+  ctx.font = '700 14px "Chakra Petch",monospace';
+  ctx.fillText(Math.round(game.tension) + '%', X - 8, Y + h * (1 - T) + 5);
+  ctx.restore();
+}
+function drawSide() {
+  const f = game.fish; const w = Math.min(200, W * 0.46), x = W / 2 - w / 2, y = H - 36;
+  ctx.save();
+  ctx.fillStyle = 'rgba(9,22,31,.75)'; ctx.fillRect(x - 8, y - 22, w + 16, 34);
+  ctx.fillStyle = 'rgba(147,170,179,.35)'; ctx.fillRect(x, y, w, 4);
+  if (Math.abs(f.dir) > 0.35) {
+    const tx = x + w / 2 - f.dir * w / 2 * 0.8;
+    ctx.fillStyle = 'rgba(111,220,154,.5)'; ctx.fillRect(tx - 18, y - 3, 36, 10);
+  }
+  ctx.fillStyle = '#eaf1ec'; ctx.beginPath(); ctx.arc(x + w / 2 + inp.side * w / 2, y + 2, 6, 0, Math.PI * 2); ctx.fill();
+  ctx.font = '500 11px "Noto Sans TC",sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#93aab3';
+  ctx.fillText('側壓（綠區＝建議方向）', W / 2, y - 10);
+  ctx.restore();
+}
+
+/* ---------------- 主迴圈 ---------------- */
+let last = performance.now();
+const dbg = $('#dbg');
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  update(dt, now);
+  draw(now);
+  if (game.state !== 'intro') {
+    const peak = game.cast && game.cast.peakAdj ? `　上次出手 ${Math.round(game.cast.peakAdj)}°/s` : '';
+    dbg.textContent = `竿角 ${Math.round(inp.theta)}°　角速度 ${Math.round(inp.speed)}°/s　側傾 ${inp.side.toFixed(2)}${peak}`;
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ---------------- 開始 ---------------- */
+const modeBtn = $('#modeBtn');
+function setMode(m) {
+  inp.mode = m; inp.hist = [];
+  modeBtn.textContent = m === 'sensor' ? '操作：體感' : '操作：滑鼠／觸控';
+}
+function begin(mode) {
+  setMode(mode);
+  $('#intro').hidden = true; modeBtn.hidden = false;
+  if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {});
+  if (!canVib && mode === 'sensor') toast('這台裝置的瀏覽器不支援震動，會用畫面震動代替');
+  toReady();
+}
+async function enableSensor() {
+  try {
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      const r = await DeviceMotionEvent.requestPermission();
+      if (r !== 'granted') throw new Error('denied');
+    }
+  } catch (_) {
+    begin('pointer'); toast('沒有取得動作感測器權限，已改用觸控操作'); return;
+  }
+  begin('sensor');
+  setTimeout(() => {
+    if (!inp.gotMotion) { setMode('pointer'); toast('這個頁面讀不到感測器資料，已改用觸控操作。可以把 HTML 檔放到 https 網址上再用手機開啟。'); }
+  }, 1500);
+}
+$('#btnSensor').addEventListener('click', enableSensor);
+$('#btnPointer').addEventListener('click', () => begin('pointer'));
+modeBtn.addEventListener('click', () => {
+  if (inp.mode === 'pointer') { if (inp.gotMotion) setMode('sensor'); else enableSensor(); }
+  else setMode('pointer');
+});
+$('#btnAgain').addEventListener('click', () => { $('#result').hidden = true; toReady(); });
+prompt('', '');
+})();
+</script>
+</body></html>
