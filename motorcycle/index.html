@@ -23,7 +23,7 @@
   </div>
   <div class="row"><button id="spin" class="on">自動旋轉</button></div>
   <label class="row" style="align-items:center">顆粒大小 <select id="res"><option value="1">1（粗）</option><option value="0.5">1/2</option><option value="0.3333333" selected>1/3</option><option value="0.25">1/4（極細）</option></select></label>
-  <label class="row" style="align-items:center">合併程度 <input id="k" type="range" min="1" max="10" value="3"> <span id="kv"></span></label>
+  <label class="row" style="align-items:center">凸包精細度 <input id="k" type="range" min="1" max="8" value="5"> <span id="kv"></span></label>
 </div>
 <div id="info"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -92,24 +92,63 @@ function voxelize(s) {
   cells = [...V.values()];
 }
 
-// ───────── 2. 積木 → 分塊 → 每塊取角點做凸包 ─────────
-// 同一部位、落在同一個 k×k×k（積木數）區塊的積木合成一個凸包。
-// 只取有露出表面的積木的角點，內部的不影響凸包。
-function buildHulls(k) {
-  const chunks = new Map();
-  const has = (i, j, l) => V.has(i + ',' + j + ',' + l);
-  for (const c of cells) {
+// ───────── 2. 每個零件各自做「近似凸分解」+ 凸包 ─────────
+// 對一個零件的積木集合：
+//   1. 算凸包，比較「凸包體積」與「積木實際體積」→ 凹度 = (凸包 − 實際) / 凸包
+//   2. 凹度 ≤ 容許值 → 這塊夠凸，直接輸出這個凸包
+//   3. 否則沿 x/y/z 某一軸切成兩半（試多個切點，選兩半凸包體積總和最小的），遞迴處理
+// 輪胎這種環形會被切成一段段圓弧，引擎、油箱這種本來就凸的零件則保持一整塊。
+const hullOf = (list) => {
+  const inSet = new Set(list.map((c) => c.idx.join(',')));
+  const pts = [];
+  for (const c of list) {
     const [i, j, l] = c.idx;
-    if (has(i + 1, j, l) && has(i - 1, j, l) && has(i, j + 1, l) && has(i, j - 1, l) && has(i, j, l + 1) && has(i, j, l - 1)) continue;
-    const key = c.part + '|' + (k >= 10 ? '' : c.idx.map((v) => Math.floor((v + 0.5) / k)).join(','));
-    let g = chunks.get(key);
-    if (!g) chunks.set(key, (g = { color: c.color, pts: [] }));
+    if (inSet.has((i + 1) + ',' + j + ',' + l) && inSet.has((i - 1) + ',' + j + ',' + l) && inSet.has(i + ',' + (j + 1) + ',' + l) &&
+        inSet.has(i + ',' + (j - 1) + ',' + l) && inSet.has(i + ',' + j + ',' + (l + 1)) && inSet.has(i + ',' + j + ',' + (l - 1))) continue; // 內部
     const h = S / 2, [x, y, z] = c.p;
-    // 輪圈/輪轂的側面與輪胎共面，稍微往外推一點避免 z-fighting
-    const zs = /Hub$/.test(c.part) ? 1.02 : /Rim$/.test(c.part) ? 1.01 : 1;
-    for (const dx of [-h, h]) for (const dy of [-h, h]) for (const dz of [-h, h]) g.pts.push([x + dx, y + dy, (z + dz) * zs]);
+    for (const dx of [-h, h]) for (const dy of [-h, h]) for (const dz of [-h, h]) pts.push([x + dx, y + dy, z + dz]);
   }
-  return [...chunks.values()].map((g) => ({ color: g.color, hull: Hull.convexHull(g.pts) }));
+  const hull = Hull.convexHull(pts);
+  return { hull, vol: Hull.volume(hull) };
+};
+const cellVol = () => S * S * S;
+
+function decompose(list, tol, out) {
+  const h = hullOf(list);
+  const concavity = (h.vol - list.length * cellVol()) / h.vol;
+  if (concavity <= tol || list.length <= 2) return out.push({ list, hull: h.hull });
+  let best = null;
+  for (let axis = 0; axis < 3; axis++) {
+    const vals = [...new Set(list.map((c) => c.idx[axis]))].sort((p, q) => p - q);
+    if (vals.length < 2) continue;
+    const cuts = new Set([1 / 4, 1 / 3, 1 / 2, 2 / 3, 3 / 4].map((f) => vals[Math.max(1, Math.round(vals.length * f))] ?? vals[vals.length - 1]));
+    for (const c of cuts) {
+      if (c === vals[0]) continue;
+      const A = list.filter((v) => v.idx[axis] < c), Bq = list.filter((v) => v.idx[axis] >= c);
+      if (!A.length || !Bq.length) continue;
+      const cost = hullOf(A).vol + hullOf(Bq).vol;
+      if (!best || cost < best.cost) best = { cost, A, B: Bq };
+    }
+  }
+  if (!best || best.cost >= h.vol * 0.999) return out.push({ list, hull: h.hull }); // 切了也沒有更好
+  decompose(best.A, tol, out); decompose(best.B, tol, out);
+}
+
+function buildHulls(tol) {
+  const parts = new Map();
+  for (const c of cells) (parts.get(c.part) || parts.set(c.part, []).get(c.part)).push(c);
+  const out = [];
+  for (const [part, list] of parts) {
+    const pieces = [];
+    decompose(list, tol, pieces);
+    // 輪圈/輪轂的側面與輪胎共面，稍微往外推一點避免 z-fighting
+    const zs = /Hub$/.test(part) ? 1.02 : /Rim$/.test(part) ? 1.01 : 1;
+    for (const p of pieces) {
+      p.hull.vertices = p.hull.vertices.map(([x, y, z]) => [x, y, z * zs]);
+      out.push({ color: list[0].color, hull: p.hull, part });
+    }
+  }
+  return out;
 }
 
 // ───────── 3. three.js 場景 ─────────
@@ -138,8 +177,11 @@ function rebuildBlocks() {
 }
 
 function rebuildPoly(k) {
+  const tol = 0.5 * Math.pow(0.7, k - 1); // 精細度 1→容許凹度 50%，8→約 4%
   polyRoot.children.slice().forEach((o) => { polyRoot.remove(o); o.geometry.dispose(); });
-  const hulls = buildHulls(k);
+  const t0 = performance.now();
+  const hulls = buildHulls(tol);
+  const ms = Math.round(performance.now() - t0);
   const pos = [], colr = [], lines = [];
   let nV = 0, nP = 0;
   for (const { color, hull } of hulls) {
@@ -160,8 +202,8 @@ function rebuildPoly(k) {
   const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(lines, 3));
   polyRoot.add(new THREE.Mesh(geo, mat), new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22 })));
   document.getElementById('info').textContent =
-    `${cells.length} 顆正立方體積木（邊長 ${+S.toFixed(3)}）→ ${hulls.length} 個凸包，${nV} 頂點 / ${nP} 面 / ${pos.length / 9} 三角形　｜　拖曳旋轉、滾輪縮放`;
-  document.getElementById('kv').textContent = k >= 10 ? '整個部位' : k + '×' + k + '×' + k + ' 顆';
+    `${cells.length} 顆正立方體積木（邊長 ${+S.toFixed(3)}）→ ${hulls.length} 個凸包（每個零件各自分解），${nV} 頂點 / ${nP} 面 / ${pos.length / 9} 三角形　｜　拖曳旋轉、滾輪縮放`;
+  document.getElementById('kv').textContent = `容許凹度 ${(tol * 100).toFixed(1)}%（${ms} ms）`;
   applyMode();
 }
 
