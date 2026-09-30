@@ -30,6 +30,9 @@ body{background:var(--night);color:var(--foam);font-family:var(--f-body);overflo
 .chip b{color:var(--foam);font-size:16px;font-variant-numeric:tabular-nums}
 #modeBtn{position:fixed;left:16px;top:calc(env(safe-area-inset-top,0px) + 96px);font:500 12px var(--f-body);
   color:var(--dim);background:var(--panel);border:1px solid rgba(147,170,179,.3);border-radius:6px;padding:5px 10px;cursor:pointer}
+#sensWrap{position:fixed;left:16px;top:calc(env(safe-area-inset-top,0px) + 132px);display:flex;align-items:center;gap:6px;
+  font:500 12px var(--f-body);color:var(--dim);background:var(--panel);border-radius:6px;padding:4px 10px;touch-action:auto}
+#sensWrap input{width:110px;accent-color:var(--lure)}
 #reel{position:fixed;right:18px;bottom:calc(env(safe-area-inset-bottom,0px) + 22px);width:104px;height:104px;border-radius:50%;
   border:3px solid var(--line);background:radial-gradient(circle at 40% 35%,#2a4a5a,#0e2230);color:var(--foam);
   font:900 18px var(--f-body);display:grid;place-content:center;line-height:1.15;cursor:pointer;touch-action:none}
@@ -72,6 +75,7 @@ dt{color:var(--dim)} dd{margin:0;text-align:right;font-family:var(--f-num);font-
   <div class="chip" id="hFishChip" hidden>魚體力 <b id="hStam">100</b>%</div>
 </div>
 <button id="modeBtn" hidden>操作：體感</button>
+<label id="sensWrap" hidden>平滑<input type="range" id="sens" min="0" max="10" step="1">靈敏</label>
 <button id="reel" hidden>收線<small>按住</small></button>
 <div id="dbg"></div>
 <div id="toast" hidden></div>
@@ -141,17 +145,40 @@ function dTheta(ms) {
   const dt = (last.t - h[i].t) / 1000;
   return dt > 0.012 ? (last.th - h[i].th) / dt : 0;
 }
-// 感測器融合：陀螺儀積分（平滑、反應快）＋加速度計慢慢校正漂移（互補濾波）
-const fuse = { init: false, th: 80, corr: 0, lastT: 0, prevA: null, gyro: 0, hasGyro: false };
+// 濾波：One Euro 自適應低通。靜止時截止頻率低（壓掉手抖），轉得越快截止頻率越高（不延遲）
 const angDiff = (a, b) => { let d = a - b; while (d > 180) d -= 360; while (d < -180) d += 360; return d; };
+class OneEuro {
+  constructor(minCut, beta, dCut = 1.2) { this.minCut = minCut; this.beta = beta; this.dCut = dCut; this.x = null; this.dx = 0; }
+  a(cut, dt) { const tau = 1 / (2 * Math.PI * cut); return 1 / (1 + tau / dt); }
+  filter(x, dt) {
+    if (this.x == null) { this.x = x; return x; }
+    const d = angDiff(x, this.x);
+    this.dx += this.a(this.dCut, dt) * (d / dt - this.dx);
+    const cut = this.minCut + this.beta * Math.abs(this.dx);
+    this.x += this.a(cut, dt) * d;
+    return this.x;
+  }
+}
+// 靈敏度 0（最平滑）～10（最靈敏）
+let sens = 6;
+try { const v = localStorage.getItem('tidefight-sens'); if (v != null) sens = +v; } catch (_) {}
+const thetaF = new OneEuro(1, 0.03), sideF = new OneEuro(1, 0.02);
+function applySens() {
+  thetaF.minCut = 0.4 * Math.pow(1.35, sens);   // 0.4 ~ 8 Hz
+  thetaF.beta = 0.01 + 0.006 * sens;
+  sideF.minCut = thetaF.minCut * 0.8; sideF.beta = thetaF.beta;
+}
+applySens();
+const rawHist = [];
+let lastMotionT = 0;
 function onMotion(e) {
   const g = e.accelerationIncludingGravity;
   if (!g || g.x == null) return;
   inp.gotMotion = true;
   if (inp.mode !== 'sensor') return;
   const now = performance.now();
-  const dt = fuse.lastT ? clamp((now - fuse.lastT) / 1000, 0.002, 0.1) : 0.016;
-  fuse.lastT = now;
+  const dt = lastMotionT ? clamp((now - lastMotionT) / 1000, 0.004, 0.1) : 0.016;
+  lastMotionT = now;
   const r = e.rotationRate;
   inp.rot = r ? Math.hypot(r.alpha || 0, r.beta || 0, r.gamma || 0) : 0;
   const a = e.acceleration;
@@ -160,36 +187,15 @@ function onMotion(e) {
   if (game.state === 'ready' && Math.abs(g.y) > 8.3 && Math.abs(g.z) < 4 && inp.rot < 40) inp.sign = Math.sign(g.y);
   const s = inp.sign;
   // theta：竿尖相對前方水平的仰角。直立 90°，平放螢幕朝上 0°，往後倒超過 90°
-  let thA = Math.atan2(s * g.y, s * g.z) / DEG;
-  if (thA < -140) thA += 360;
-  // 甩動時加速度計會被手的加速度污染，這時少信任它
-  const gmag = Math.hypot(g.x, g.y, g.z);
-  const trust = clamp(1 - Math.abs(gmag - 9.81) / 3, 0, 1);
-  const beta = r && r.beta != null ? r.beta : null;
-  if (!fuse.init) { fuse.th = thA; fuse.init = true; }
-  if (beta != null && (beta !== 0 || fuse.hasGyro)) {
-    fuse.hasGyro = true;
-    // 自動學習陀螺儀方向（各平台符號不同）：慢速轉動時比較陀螺儀與加速度計的變化方向
-    if (fuse.prevA != null) {
-      const dA = angDiff(thA, fuse.prevA);
-      if (trust > 0.7 && Math.abs(beta) > 15 && Math.abs(beta) < 250 && Math.abs(dA) > 0.15)
-        fuse.corr = clamp(fuse.corr * 0.995 + Math.sign(beta * dA), -40, 40);
-    }
-    const k = fuse.corr >= 0 ? 1 : -1;
-    fuse.gyro = k * beta;
-    const pred = fuse.th + fuse.gyro * dt;
-    const w = (0.008 + 0.03 * trust) * (Math.abs(fuse.corr) < 5 ? 3 : 1);
-    fuse.th = pred + w * angDiff(thA, pred);
-  } else {
-    // 沒有陀螺儀：用自適應低通，靜止時濾得重、快速轉動時跟得上
-    const d = angDiff(thA, fuse.th);
-    const w = clamp(0.06 + Math.abs(d) / 60, 0.06, 0.6);
-    fuse.th += w * d;
-  }
-  fuse.prevA = thA;
-  if (fuse.th > 220) fuse.th -= 360; if (fuse.th < -140) fuse.th += 360;
-  inp.theta = fuse.th;
-  inp.side = lerp(inp.side, clamp(-s * g.x / 9.81 * 1.5, -1, 1), 0.12);
+  let th = Math.atan2(s * g.y, s * g.z) / DEG;
+  if (th < -140) th += 360;
+  rawHist.push({ t: now, th });
+  while (rawHist.length > 2 && now - rawHist[0].t > 400) rawHist.shift();
+  let f = thetaF.filter(th, dt);
+  if (f > 220) f -= 360; if (f < -140) f += 360;
+  thetaF.x = f;
+  inp.theta = f;
+  inp.side = clamp(sideF.filter(clamp(-s * g.x / 9.81 * 1.5, -1, 1), dt), -1, 1);
   pushTheta(inp.theta, now);
 }
 addEventListener('devicemotion', onMotion);
@@ -218,9 +224,15 @@ function computeSpeed(now) {
   const h = inp.hist;
   if (!h.length || now - h[h.length - 1].t > 150) { inp.speed = 0; return; }
   let sp = dTheta(70);
-  if (inp.mode === 'sensor' && fuse.hasGyro && Math.abs(fuse.corr) >= 3) sp = fuse.gyro;
-  else if (inp.mode === 'sensor' && inp.rot > Math.abs(sp) && Math.abs(sp) > 60) sp = Math.sign(sp) * Math.min(inp.rot, Math.abs(sp) * 2.5);
+  if (inp.mode === 'sensor') {
+    // 角速度用未濾波的角度判斷方向、用陀螺儀判斷大小，不受濾波延遲影響
+    const h2 = rawHist; let raw = 0;
+    if (h2.length > 1) { const L = h2[h2.length - 1]; let i = h2.length - 1; while (i > 0 && L.t - h2[i].t < 60) i--; const d = (L.t - h2[i].t) / 1000; if (d > 0.012) raw = angDiff(L.th, h2[i].th) / d; }
+    sp = raw;
+    if (inp.rot > 0 && Math.abs(raw) > 40) sp = Math.sign(raw) * inp.rot;
+  }
   inp.speed = sp;
+  inp.fspeed = dTheta(120);
 }
 
 /* ---------------- 震動（沒有震動時用畫面震動代替） ---------------- */
@@ -386,7 +398,7 @@ function update(dt, now) {
     }
     case 'ready': {
       prompt('直立握竿', inp.mode === 'pointer' ? '把游標移到畫面中間偏上，停住一下' : '手機直立、螢幕朝向自己，像握住釣竿');
-      if (th > 58 && th < 125 && Math.abs(sp) < 70) game.holdT += dt; else game.holdT = 0;
+      if (th > 58 && th < 125 && Math.abs(inp.fspeed) < 70) game.holdT += dt; else game.holdT = 0;
       if (game.holdT > 0.6) { game.cast = { back: false, maxBack: th, peak: 0 }; vib(25); setState('armed'); }
       break;
     }
@@ -733,6 +745,7 @@ const modeBtn = $('#modeBtn');
 function setMode(m) {
   inp.mode = m; inp.hist = [];
   modeBtn.textContent = m === 'sensor' ? '操作：體感' : '操作：滑鼠／觸控';
+  $('#sensWrap').hidden = m !== 'sensor';
 }
 function begin(mode) {
   setMode(mode);
@@ -772,6 +785,9 @@ modeBtn.addEventListener('click', () => {
   if (inp.mode === 'pointer') { if (inp.gotMotion) setMode('sensor'); else enableSensor(); }
   else setMode('pointer');
 });
+const sensEl = $('#sens');
+sensEl.value = sens;
+sensEl.addEventListener('input', () => { sens = +sensEl.value; applySens(); try { localStorage.setItem('tidefight-sens', sens); } catch (_) {} });
 $('#btnAgain').addEventListener('click', () => { $('#result').hidden = true; toReady(); });
 prompt('', '');
 })();
