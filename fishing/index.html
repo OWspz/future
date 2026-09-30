@@ -90,7 +90,7 @@ dt{color:var(--dim)} dd{margin:0;text-align:right;font-family:var(--f-num);font-
     <h1>潮間搏魚</h1>
     <p>把手機當成釣竿握在手上。直立握好、往後蓄力、往前甩出，等浮標被拉下去再猛力提竿，接著靠竿子角度和收線跟魚拉扯。</p>
     <ol class="steps">
-      <li><b>拋竿</b>：手機直立（短震兩下）→ 往後舉（長震）→ 快速往前甩，停在略高於水平（10°–45°）</li>
+      <li><b>拋竿</b>：手機直立（持續震動，握穩後短震兩下）→ 往後舉（到位持續震動）→ 快速往前甩，停在略高於水平（10°–45°）</li>
       <li><b>等待</b>：浮標輕點是試探，被整個拉下去時手機會長震，<b>立刻往上提</b></li>
       <li><b>搏魚</b>：舉竿施壓消耗魚體力，魚衝刺時放低竿子別收線；魚往哪邊跑，竿子往反方向傾</li>
       <li><b>收線</b>：按住右下角按鈕，張力別爆表也別太鬆</li>
@@ -98,12 +98,12 @@ dt{color:var(--dim)} dd{margin:0;text-align:right;font-family:var(--f-num);font-
     <details class="legend">
       <summary>震動提示對照（不用看螢幕也能玩）</summary>
       <dl>
-        <dt>短震一下</dt><dd>竿子進入目標角度（直立握竿、等待時竿尖 10–50°）</dd>
+        <dt>持續震動</dt><dd>竿子停在目標角度內就一直震，離開就停：直立握竿（58–98°）、往後蓄力（100° 以上）</dd>
+        <dt>短震一下</dt><dd>等待時竿尖放到 10–50°</dd>
         <dt>短震兩下</dt><dd>握穩了，可以往後蓄力</dd>
-        <dt>長震一下</dt><dd>蓄力到位，往前甩</dd>
-        <dt>拋竿結果</dt><dd>三下＝完美、兩下＝漂亮、一下＝普通，一長聲＝失敗</dd>
+                <dt>拋竿結果</dt><dd>三下＝完美、兩下＝漂亮、一下＝普通，一長聲＝失敗</dd>
         <dt>等待</dt><dd>輕點＝魚在試探；連續長震＝咬餌，立刻提竿</dd>
-        <dt>搏魚</dt><dd>重震一下＝進入壓竿區（55–100°）、輕震三下＝進入放竿區（15–35°）；小脈衝越密代表張力越高</dd>
+        <dt>搏魚</dt><dd>在壓竿區（55–100°）持續長震、在放竿區（15–35°）持續噠噠噠；兩區之外的小脈衝越密代表張力越高，張力過高時一律改成急促警告</dd>
       </dl>
     </details>
     <div class="btns">
@@ -280,7 +280,13 @@ function iosHaptic(p) {
   });
 }
 let shake = 0;
+let eventUntil = 0;
+function rawVib(p) {
+  if (canVib) { try { navigator.vibrate(p); } catch (_) {} }
+  else if (hapticLabel && p) iosHaptic(p);
+}
 function vib(p) {
+  eventUntil = performance.now() + (Array.isArray(p) ? p.reduce((a, b) => a + b, 0) : p);
   if (canVib) { try { navigator.vibrate(p); } catch (_) {} }
   else if (hapticLabel) iosHaptic(p);
   const total = Array.isArray(p) ? p.reduce((s, v, i) => s + (i % 2 ? 0 : v), 0) : p;
@@ -504,7 +510,7 @@ function fightStep(dt) {
 
   // 震動回饋：張力越高，脈衝越密越長
   game.buzzT -= dt;
-  if (game.buzzT <= 0) {
+  if (game.buzzT <= 0 && !(zoneState.contOn && T <= 85)) {
     const k = clamp(T / 100, 0, 1.2);
     vib(T > 92 ? 70 : Math.round(12 + k * 38));
     game.buzzT = T > 92 ? 0.12 : lerp(0.8, 0.12, Math.min(k, 1));
@@ -746,32 +752,47 @@ const HAPTIC = {
   fail: [600],                       // 失敗：一長聲
 };
 const ZONES = {
-  ready: [{ a0: 58, a1: 98, col: '#6fdc9a', lab: '直立', pat: HAPTIC.zone }],
-  armed: [{ a0: 100, a1: 160, col: '#ffc64a', lab: '蓄力', pat: HAPTIC.back }, { a0: 10, a1: 45, col: '#6fdc9a', lab: '停竿' }],
+  ready: [{ a0: 58, a1: 98, col: '#6fdc9a', lab: '直立', cont: 'solid' }],
+  armed: [{ a0: 100, a1: 160, col: '#ffc64a', lab: '蓄力', cont: 'solid' }, { a0: 10, a1: 45, col: '#6fdc9a', lab: '停竿' }],
   swinging: [{ a0: 10, a1: 45, col: '#6fdc9a', lab: '停竿' }],
   release: [{ a0: 10, a1: 45, col: '#6fdc9a', lab: '停竿' }],
   wait: [{ a0: 10, a1: 50, col: '#6fdc9a', lab: '竿尖', pat: HAPTIC.zone }],
   bite: [{ a0: 60, a1: 120, col: '#ff4d5e', lab: '提竿' }],
-  fight: [{ a0: 15, a1: 35, col: '#8fd3ff', lab: '放', pat: HAPTIC.ease }, { a0: 55, a1: 100, col: '#ffc64a', lab: '壓', pat: HAPTIC.press }],
+  fight: [{ a0: 15, a1: 35, col: '#8fd3ff', lab: '放', cont: 'pulse' }, { a0: 55, a1: 100, col: '#ffc64a', lab: '壓', cont: 'solid' }],
 };
-const zoneState = { state: '', cur: -1, lastT: 0 };
+const zoneState = { state: '', cur: -1, lastT: 0, contOn: false, contT: 0 };
+function stopCont(now) {
+  if (zoneState.contOn && now >= eventUntil) rawVib(0);
+  zoneState.contOn = false;
+}
+// 竿子停在目標角度區的期間持續震動（連續＝實心長震，脈衝＝一直噠噠噠），離開就停
 function zoneHaptics(now) {
   const zs = ZONES[game.state] || [];
-  if (zoneState.state !== game.state) { zoneState.state = game.state; zoneState.cur = -1; }
+  if (zoneState.state !== game.state) { zoneState.state = game.state; zoneState.cur = -1; stopCont(now); }
   const th = inp.theta;
+  let entered = false;
   if (zoneState.cur >= 0) {
     const z = zs[zoneState.cur];
-    if (!z || th < z.a0 - 3 || th > z.a1 + 3) zoneState.cur = -1;   // 離開要超出 3°，避免在邊界來回狂震
-    else return;
+    if (!z || th < z.a0 - 3 || th > z.a1 + 3) { zoneState.cur = -1; stopCont(now); }   // 離開要超出 3°，避免在邊界來回
   }
-  if (game.stateT <= 0.2) return;
-  const i = zs.findIndex(z => th >= z.a0 + 1 && th <= z.a1 - 1);
-  if (i < 0) return;
-  zoneState.cur = i;
-  if (zs[i].pat && now - zoneState.lastT > 250) {
+  if (zoneState.cur < 0) {
+    if (game.stateT <= 0.2) return;
+    const i = zs.findIndex(z => th >= z.a0 + 1 && th <= z.a1 - 1);
+    if (i < 0) return;
+    zoneState.cur = i; entered = true;
+  }
+  const z = zs[zoneState.cur];
+  if (z.cont) {
+    if (now < eventUntil) return;                                  // 事件震動（咬餌、拋竿結果…）優先
+    if (game.state === 'fight' && game.tension > 85) { zoneState.contOn = false; return; }  // 張力危險警告優先
+    if (!zoneState.contOn || now >= zoneState.contT) {
+      if (z.cont === 'solid') { rawVib(400); zoneState.contT = now + 300; }
+      else { rawVib([90, 90, 90, 90, 90]); zoneState.contT = now + 360; }
+      zoneState.contOn = true;
+    }
+  } else if (entered && z.pat && now - zoneState.lastT > 250) {
     zoneState.lastT = now;
-    vib(zs[i].pat);
-    game.buzzT = Math.max(game.buzzT, 0.45);   // 搏魚時讓到位提示不被張力脈衝蓋掉
+    vib(z.pat);
   }
 }
 
