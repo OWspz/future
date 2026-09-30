@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>積木機車 → Low-poly</title>
 <style>
-  html,body{margin:0;height:100%;background:#1b2030;color:#dfe6f5;font:14px/1.4 system-ui,sans-serif;overflow:hidden}
+  html,body{margin:0;height:100%;background:radial-gradient(ellipse at 50% 35%,#2b3552,#141827);color:#dfe6f5;font:14px/1.4 system-ui,sans-serif;overflow:hidden}
   canvas{display:block;touch-action:none}
   #ui{position:fixed;top:10px;left:10px;display:flex;flex-direction:column;gap:6px}
-  #ui .row{display:flex;gap:6px}
+  #ui .row{display:flex;gap:6px;align-items:center}
   button{background:#2c3550;color:#dfe6f5;border:1px solid #46527a;border-radius:6px;padding:6px 12px;font:inherit;cursor:pointer}
   button.on{background:#e8833a;border-color:#e8833a;color:#fff}
   #info{position:fixed;bottom:10px;left:10px;opacity:.75;font-size:12px}
@@ -21,193 +21,244 @@
     <button data-mode="lowpoly" class="on">Low-poly（凸包）</button>
     <button data-mode="both">疊合</button>
   </div>
-  <div class="row"><button id="spin" class="on">自動旋轉</button></div>
-  <label class="row" style="align-items:center">顆粒大小 <select id="res"><option value="1">1（粗）</option><option value="0.5">1/2</option><option value="0.3333333" selected>1/3</option><option value="0.25">1/4（極細）</option></select></label>
-  <label class="row" style="align-items:center">凸包精細度 <input id="k" type="range" min="1" max="8" value="5"> <span id="kv"></span></label>
+  <div class="row"><button id="spin" class="on">自動旋轉</button><button id="edges">邊線</button></div>
+  <label class="row">顆粒大小 <select id="res"><option value="1">1（粗）</option><option value="0.5">1/2</option><option value="0.3333333" selected>1/3</option><option value="0.25">1/4（極細）</option></select></label>
+  <label class="row">凸包面數 <input id="dirs" type="range" min="0" max="40" value="14"> <span id="dv"></span></label>
+  <label class="row">輪胎分段 <input id="seg" type="range" min="6" max="24" step="2" value="14"> <span id="sv"></span></label>
 </div>
 <div id="info"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="hull.js"></script>
 <script>
-// ───────── 1. 機車的「形狀描述」，再用正立方體小積木去填滿 ─────────
-// 單位長度 = 1；x 朝前、y 朝上、z 左右（左右對稱）。後蓋的 shapes 之後的會蓋掉前面的。
-const shapes = [];
-const shape = (part, color, inside) => shapes.push({ part, color, inside });
-// 軸對齊長方體。參數用「格子編號(含頭尾)」，也就是範圍會各外擴 0.5
-const box = (part, color, x0, x1, y0, y1, z0, z1) =>
-  shape(part, color, (x, y, z) => x >= x0 - .5 && x <= x1 + .5 && y >= y0 - .5 && y <= y1 + .5 && z >= z0 - .5 && z <= z1 + .5);
+// ───────── 1. 機車的形狀描述（單位：輪胎直徑 10；x 朝前、y 朝上、z 左右對稱）─────────
+// 每個 add() 是一個零件，之後會用邊長 s 的「正立方體」小積木把它填滿。
+const RED = 0xd63a2f, BLK = 0x26262b, CHAR = 0x3b404c, SILV = 0xb9c0cc, GUN = 0x5d6675, GOLD = 0xd2a23a, TIRE = 0x1f2024, RIM = 0xc9d1e0, LENS = 0xf4ecc4, LAMP = 0xff3a2a;
+const specs = [];
+const add = (part, color, prim, cut) => specs.push({ part, color, ...prim, cut });
 const sym = (fn) => { fn(1); fn(-1); };
-// 輪子：圓環(輪胎) + 內圓(輪圈) + 中心(輪轂)，圓面在 x-y 平面
-function wheel(name, cx, cy, z0, z1) {
-  const zin = (z) => z >= z0 - .5 && z <= z1 + .5;
-  shape(name + 'Tire', 0x2b2d33, (x, y, z) => { const d = Math.hypot(x - cx, y - cy); return zin(z) && d <= 4.4 && d > 3.0; });
-  shape(name + 'Rim', 0xc9d1e0, (x, y, z) => { const d = Math.hypot(x - cx, y - cy); return zin(z) && d <= 3.0 && d > 1.2; });
-  shape(name + 'Hub', 0x8a93a8, (x, y, z) => zin(z) && Math.hypot(x - cx, y - cy) <= 1.2);
+const rad = (d) => (d * Math.PI) / 180;
+
+// ── 基本形狀：每個回傳 { bb:[x0,x1,y0,y1,z0,z1], inside(x,y,z) } ──
+function capsule(a, b, r) {
+  const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], l2 = ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2;
+  return {
+    bb: [0, 1, 2].flatMap((i) => [Math.min(a[i], b[i]) - r, Math.max(a[i], b[i]) + r]),
+    inside(x, y, z) {
+      const t = Math.max(0, Math.min(1, ((x - a[0]) * ab[0] + (y - a[1]) * ab[1] + (z - a[2]) * ab[2]) / l2));
+      return (x - a[0] - t * ab[0]) ** 2 + (y - a[1] - t * ab[1]) ** 2 + (z - a[2] - t * ab[2]) ** 2 <= r * r;
+    },
+  };
 }
-wheel('rear', 6, 4, -1, 1);
-wheel('front', 22, 4, 0, 0);
-box('frontHub', 0x8a93a8, 22, 22, 4, 4, -1, 1);
-// 引擎
-box('engine', 0x6d7685, 11, 16, 2, 5, -1, 1);
-box('engine', 0x6d7685, 12, 15, 6, 7, -1, 1);
-// 車架
-box('frame', 0x3a3f4d, 9, 12, 6, 8, 0, 0);
-box('frame', 0x3a3f4d, 16, 19, 6, 8, 0, 0);
-// 油箱、座墊、尾翼
-box('tank', 0xd9342b, 14, 20, 9, 10, -1, 1);
-box('tank', 0xd9342b, 13, 13, 9, 9, -1, 1);
-box('seat', 0x2a2a2e, 7, 12, 9, 9, -1, 1);
-box('tail', 0xd9342b, 3, 6, 9, 10, -1, 1);
-box('taillight', 0xff5a4a, 2, 2, 10, 10, 0, 0);
-// 前叉：從車軸斜向後上方的一條粗 1 的斜線
-sym((sg) => shape('fork', 0xaab3c5, (x, y, z) => {
-  if (Math.abs(z - sg) > .5 || y < 3.5 || y > 12.5) return false;
-  const cx = 22 - (y - 4) * 0.3;
-  return Math.abs(x - cx) <= .5;
-}));
-box('fender', 0xd9342b, 20, 25, 9, 9, 0, 0);
-// 龍頭、後視鏡、頭燈
-box('bar', 0x2a2a2e, 19, 20, 13, 13, -3, 3);
-sym((sg) => box('mirror', 0xaab3c5, 19, 19, 14, 15, 3 * sg, 3 * sg));
-box('light', 0xf3e6a1, 21, 22, 10, 12, -1, 1);
-// 後叉與排氣管
-sym((sg) => {
-  box('swing', 0x3a3f4d, 6, 9, 3, 3, 2 * sg, 2 * sg);
-  box('exhaust', 0xb8bcc6, 11, 15, 2, 2, 2 * sg, 2 * sg);
-  box('exhaust', 0xb8bcc6, 10, 11, 3, 3, 2 * sg, 2 * sg);
-  box('exhaust', 0xb8bcc6, 4, 10, 4, 4, 2 * sg, 2 * sg);
+const ell = (c, r) => ({
+  bb: [c[0] - r[0], c[0] + r[0], c[1] - r[1], c[1] + r[1], c[2] - r[2], c[2] + r[2]],
+  inside: (x, y, z) => ((x - c[0]) / r[0]) ** 2 + ((y - c[1]) / r[1]) ** 2 + ((z - c[2]) / r[2]) ** 2 <= 1,
+});
+// 圓角長方體，可繞 z 軸旋轉 rot 度（正值＝前端上揚）
+function rbox(c, h, r, rot = 0) {
+  const cs = Math.cos(rad(rot)), sn = Math.sin(rad(rot)), d = Math.hypot(h[0], h[1], h[2]);
+  return {
+    bb: [c[0] - d, c[0] + d, c[1] - d, c[1] + d, c[2] - h[2], c[2] + h[2]].map((v, i) => (i >= 4 ? v : v)),
+    inside(x, y, z) {
+      const dx = x - c[0], dy = y - c[1];
+      const lx = Math.abs(dx * cs + dy * sn) - (h[0] - r), ly = Math.abs(-dx * sn + dy * cs) - (h[1] - r), lz = Math.abs(z - c[2]) - (h[2] - r);
+      return Math.hypot(Math.max(lx, 0), Math.max(ly, 0), Math.max(lz, 0)) + Math.min(Math.max(lx, ly, lz), 0) <= r;
+    },
+  };
+}
+// 輪胎：截面為橢圓的圓環（圓面在 x-y 平面）
+const tire = (cx, cy, R, tw, zw) => ({
+  bb: [cx - R, cx + R, cy - R, cy + R, -zw, zw],
+  inside(x, y, z) { const r = Math.hypot(x - cx, y - cy); return ((r - (R - tw)) / tw) ** 2 + (z / zw) ** 2 <= 1; },
+});
+const disc = (cx, cy, r, zh, zmin = 0) => ({
+  bb: [cx - r, cx + r, cy - r, cy + r, -zh, zh],
+  inside(x, y, z) { return Math.hypot(x - cx, y - cy) <= r && Math.abs(z) <= zh && Math.abs(z) >= zmin; },
+});
+// 擋泥板：繞輪軸的一段弧形薄殼；角度從正上方算起、向前為正
+const arc = (cx, cy, r0, r1, a0, a1, zh) => ({
+  bb: [cx - r1, cx + r1, cy - r1, cy + r1, -zh, zh],
+  inside(x, y, z) {
+    const dx = x - cx, dy = y - cy, r = Math.hypot(dx, dy), a = (Math.atan2(dx, dy) * 180) / Math.PI;
+    return r >= r0 && r <= r1 && a >= a0 && a <= a1 && Math.abs(z) <= zh;
+  },
 });
 
-// 把形狀用邊長 s 的正立方體格子取樣：格子中心在形狀內就放一顆積木
-let S = 1, cells = [], V = new Map();
+// ── 輪子 ──
+function wheel(name, cx, cy, zw) {
+  add(name + 'Tire', TIRE, tire(cx, cy, 5, 1.15, zw), { radial: [cx, cy] });
+  add(name + 'Rim', RIM, disc(cx, cy, 3.25, zw * 0.8));
+  add(name + 'Hub', GUN, disc(cx, cy, 1.0, zw * 0.95));
+  add(name + 'Axle', SILV, capsule([cx, cy, -zw - 0.7], [cx, cy, zw + 0.7], 0.5));
+}
+wheel('rear', 5.5, 5, 1.9);
+wheel('front', 22.5, 5, 1.35);
+add('frontFender', RED, arc(22.5, 5, 5.35, 6.0, -30, 70, 1.6), { radial: [22.5, 5], n: 3 });
+
+// ── 前叉、龍頭、頭燈 ──
+const A = [22.5, 5], T = [19.4, 13.4];
+const at = (t, z) => [A[0] + (T[0] - A[0]) * t, A[1] + (T[1] - A[1]) * t, z];
+sym((g) => {
+  add('forkLower', SILV, capsule(at(0, 1.75 * g), at(0.5, 1.75 * g), 0.55));
+  add('forkUpper', GOLD, capsule(at(0.5, 1.75 * g), at(1.0, 1.75 * g), 0.42));
+  add('bar', BLK, capsule([19.0, 14.5, 0], [18.2, 14.8, 4.3 * g], 0.32));
+  add('grip', 0x111114, capsule([18.2, 14.8, 3.3 * g], [18.2, 14.8, 4.4 * g], 0.5));
+  add('mirrorStem', BLK, capsule([18.6, 14.9, 3.4 * g], [17.7, 16.9, 4.2 * g], 0.15));
+  add('mirror', SILV, ell([17.4, 17.1, 4.3 * g], [0.25, 0.6, 0.85]));
+});
+add('clamp', CHAR, rbox([19.5, 13.5, 0], [0.7, 0.4, 2.3], 0.3));
+add('headTube', CHAR, capsule([18.8, 11.8, 0], [19.4, 13.3, 0], 0.6));
+add('barClamp', CHAR, rbox([19.0, 14.3, 0], [0.5, 0.35, 1.0], 0.2));
+add('dash', BLK, rbox([18.3, 15.2, 0], [0.5, 0.7, 1.3], 0.3, -20));
+add('lightShell', CHAR, ell([20.5, 12.7, 0], [1.0, 1.6, 1.6]));
+add('lens', LENS, ell([21.3, 12.7, 0], [0.65, 1.35, 1.35]));
+
+// ── 車架、後叉、避震 ──
+sym((g) => {
+  add('spar', CHAR, capsule([18.6, 11.9, 1.2 * g], [10.4, 9.7, 2.0 * g], 0.55));
+  add('sparDown', CHAR, capsule([10.4, 9.7, 2.0 * g], [9.8, 5.6, 2.4 * g], 0.55));
+  add('subframe', CHAR, capsule([10.4, 10.0, 1.5 * g], [3.2, 11.0, 1.2 * g], 0.38));
+  add('downTube', CHAR, capsule([18.7, 11.4, 0.6 * g], [16.6, 3.2, 1.0 * g], 0.45));
+  add('swingarm', CHAR, capsule([9.8, 5.4, 2.45 * g], [5.5, 5.0, 2.45 * g], 0.55));
+  add('peg', SILV, capsule([9.8, 3.3, 1.8 * g], [9.8, 3.3, 3.4 * g], 0.28));
+  // 排氣管
+  add('header', SILV, capsule([15.0, 8.5, 1.5 * g], [17.3, 5.0, 1.6 * g], 0.5));
+  add('header', SILV, capsule([17.3, 5.0, 1.6 * g], [15.0, 2.0, 1.9 * g], 0.5));
+  add('pipe', SILV, capsule([15.0, 2.0, 1.9 * g], [8.0, 2.4, 3.0 * g], 0.6));
+  add('muffler', GUN, capsule([8.0, 2.7, 3.0 * g], [0.9, 4.6, 3.0 * g], 1.05));
+  // 離合器蓋、鏈輪蓋
+  add('cover', SILV, disc(11.0, 4.8, 1.7, 2.3, 1.6), {}); // 會兩側各一片
+});
+add('shock', GOLD, capsule([8.4, 10.2, 0], [10.8, 5.4, 0], 0.5));
+
+// ── 引擎 ──
+add('crankcase', GUN, rbox([13.2, 5.0, 0], [2.9, 2.3, 1.7], 0.8));
+add('cylinder', 0x6d7685, rbox([14.2, 8.4, 0], [1.6, 1.9, 1.45], 0.4, -14));
+add('head', SILV, rbox([14.6, 10.0, 0], [1.75, 0.8, 1.65], 0.4, -14));
+
+// ── 車身 ──
+add('tank', RED, rbox([16.0, 12.3, 0], [4.3, 1.5, 2.0], 1.3, 7));
+add('cap', SILV, rbox([15.7, 13.85, 0], [0.6, 0.15, 0.6], 0.1, 7));
+add('seat', BLK, rbox([9.4, 11.5, 0], [3.3, 0.65, 1.55], 0.55, -5));
+add('tail', RED, rbox([4.0, 11.9, 0], [3.4, 0.85, 1.35], 0.75, -9));
+add('taillight', LAMP, rbox([0.55, 12.4, 0], [0.3, 0.45, 1.0], 0.2));
+
+// ───────── 2. 用邊長 s 的正立方體格子取樣（格子中心在形狀內就放一顆）─────────
+let S = 1, cells = [];
+const OFF = 64, SZ = 512;
+const KEY = (i, j, k) => ((i + OFF) * SZ + (j + OFF)) * SZ + (k + OFF);
 function voxelize(s) {
-  S = s; V = new Map(); cells = [];
-  const n = (v) => Math.round(v / s);
-  for (let i = n(0); i <= n(27); i++) for (let j = n(-0.5); j <= n(16); j++) for (let k = n(-4); k <= n(4); k++) {
-    const x = i * s, y = j * s, z = k * s;
-    let hit = null;
-    for (const sh of shapes) if (sh.inside(x, y, z)) hit = sh; // 後定義的蓋掉先前的
-    if (hit) V.set(i + ',' + j + ',' + k, { idx: [i, j, k], p: [x, y, z], part: hit.part, color: hit.color });
-  }
+  S = s;
+  const V = new Map();
+  specs.forEach((sp, sid) => {
+    const [x0, x1, y0, y1, z0, z1] = sp.bb;
+    for (let i = Math.ceil(x0 / s); i <= Math.floor(x1 / s); i++) for (let j = Math.ceil(y0 / s); j <= Math.floor(y1 / s); j++)
+      for (let k = Math.ceil(z0 / s); k <= Math.floor(z1 / s); k++)
+        if (sp.inside(i * s, j * s, k * s)) V.set(KEY(i, j, k), { sid, idx: [i, j, k], p: [i * s, j * s, k * s], color: sp.color });
+  });
   cells = [...V.values()];
 }
 
-// ───────── 2. 每個零件各自做「近似凸分解」+ 凸包 ─────────
-// 對一個零件的積木集合：
-//   1. 算凸包，比較「凸包體積」與「積木實際體積」→ 凹度 = (凸包 − 實際) / 凸包
-//   2. 凹度 ≤ 容許值 → 這塊夠凸，直接輸出這個凸包
-//   3. 否則沿 x/y/z 某一軸切成兩半（試多個切點，選兩半凸包體積總和最小的），遞迴處理
-// 輪胎這種環形會被切成一段段圓弧，引擎、油箱這種本來就凸的零件則保持一整塊。
-const hullOf = (list) => {
-  const inSet = new Set(list.map((c) => c.idx.join(',')));
-  const pts = [];
-  for (const c of list) {
-    const [i, j, l] = c.idx;
-    if (inSet.has((i + 1) + ',' + j + ',' + l) && inSet.has((i - 1) + ',' + j + ',' + l) && inSet.has(i + ',' + (j + 1) + ',' + l) &&
-        inSet.has(i + ',' + (j - 1) + ',' + l) && inSet.has(i + ',' + j + ',' + (l + 1)) && inSet.has(i + ',' + j + ',' + (l - 1))) continue; // 內部
-    const h = S / 2, [x, y, z] = c.p;
-    for (const dx of [-h, h]) for (const dy of [-h, h]) for (const dz of [-h, h]) pts.push([x + dx, y + dy, z + dz]);
-  }
-  const hull = Hull.convexHull(pts);
-  return { hull, vol: Hull.volume(hull) };
-};
-const cellVol = () => S * S * S;
-
-function decompose(list, tol, out) {
-  const h = hullOf(list);
-  const concavity = (h.vol - list.length * cellVol()) / h.vol;
-  if (concavity <= tol || list.length <= 2) return out.push({ list, hull: h.hull });
-  let best = null;
-  for (let axis = 0; axis < 3; axis++) {
-    const vals = [...new Set(list.map((c) => c.idx[axis]))].sort((p, q) => p - q);
-    if (vals.length < 2) continue;
-    const cuts = new Set([1 / 4, 1 / 3, 1 / 2, 2 / 3, 3 / 4].map((f) => vals[Math.max(1, Math.round(vals.length * f))] ?? vals[vals.length - 1]));
-    for (const c of cuts) {
-      if (c === vals[0]) continue;
-      const A = list.filter((v) => v.idx[axis] < c), Bq = list.filter((v) => v.idx[axis] >= c);
-      if (!A.length || !Bq.length) continue;
-      const cost = hullOf(A).vol + hullOf(Bq).vol;
-      if (!best || cost < best.cost) best = { cost, A, B: Bq };
-    }
-  }
-  if (!best || best.cost >= h.vol * 0.999) return out.push({ list, hull: h.hull }); // 切了也沒有更好
-  decompose(best.A, tol, out); decompose(best.B, tol, out);
+// ───────── 3. 每個零件各自算凸包（支撐點法）─────────
+// 凸包只取「往 D 個方向最遠的角點」，D = 26 個方向(6 面+12 邊+8 角，讓長方體保持完整) + 費氏螺旋 extra 個。
+// 方向越多，凸包越貼近原形、面越多；越少則越「low-poly」。
+function directions(extra) {
+  const D = [];
+  for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) if (x || y || z) { const l = Math.hypot(x, y, z); D.push([x / l, y / l, z / l]); }
+  const ga = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < extra; i++) { const y = 1 - (2 * (i + 0.5)) / extra, r = Math.sqrt(1 - y * y); D.push([Math.cos(ga * i) * r, y, Math.sin(ga * i) * r]); }
+  return D;
 }
-
-function buildHulls(tol) {
-  const parts = new Map();
-  for (const c of cells) (parts.get(c.part) || parts.set(c.part, []).get(c.part)).push(c);
-  const out = [];
-  for (const [part, list] of parts) {
-    const pieces = [];
-    decompose(list, tol, pieces);
-    // 輪圈/輪轂的側面與輪胎共面，稍微往外推一點避免 z-fighting
-    const zs = /Hub$/.test(part) ? 1.02 : /Rim$/.test(part) ? 1.01 : 1;
-    for (const p of pieces) {
-      p.hull.vertices = p.hull.vertices.map(([x, y, z]) => [x, y, z * zs]);
-      out.push({ color: list[0].color, hull: p.hull, part });
-    }
+function pieceHull(list, keys, D) {
+  const pts = [], h = S / 2;
+  for (const c of list) {
+    const [i, j, k] = c.idx;
+    if (keys.has(KEY(i + 1, j, k)) && keys.has(KEY(i - 1, j, k)) && keys.has(KEY(i, j + 1, k)) && keys.has(KEY(i, j - 1, k)) && keys.has(KEY(i, j, k + 1)) && keys.has(KEY(i, j, k - 1))) continue;
+    for (const dx of [-h, h]) for (const dy of [-h, h]) for (const dz of [-h, h]) pts.push([c.p[0] + dx, c.p[1] + dy, c.p[2] + dz]);
   }
+  const pick = new Map();
+  for (const d of D) {
+    let best = -Infinity;
+    for (const p of pts) { const v = p[0] * d[0] + p[1] * d[1] + p[2] * d[2]; if (v > best) best = v; }
+    for (const p of pts) if (p[0] * d[0] + p[1] * d[1] + p[2] * d[2] >= best - 1e-6) pick.set(p.join(','), p); // 並列最遠的點一併保留（平面才會完整）
+  }
+  try { return Hull.convexHull([...pick.values()]); } catch (e) { return Hull.convexHull(pts); }
+}
+function buildHulls(extra, seg) {
+  const D = directions(extra), pieces = new Map();
+  const put = (key, c) => { let p = pieces.get(key); if (!p) pieces.set(key, (p = { list: [], keys: new Set(), color: c.color, sid: c.sid })); p.list.push(c); p.keys.add(KEY(...c.idx)); };
+  for (const c of cells) {
+    const sp = specs[c.sid];
+    if (sp.cut && sp.cut.radial) {
+      // 依繞輪軸的角度切成 n 段；相鄰兩段各多吃一點點，避免接縫裂開
+      const n = sp.cut.n || seg, [cx, cy] = sp.cut.radial;
+      const u = ((Math.atan2(c.p[1] - cy, c.p[0] - cx) + Math.PI) / (2 * Math.PI)) * n, b = Math.floor(u), f = u - b;
+      const dr = Math.max(Math.hypot(c.p[0] - cx, c.p[1] - cy), 1), m = (1.5 * S / dr / (2 * Math.PI)) * n;
+      put(c.sid + ':' + (b % n), c);
+      if (f < m) put(c.sid + ':' + ((b + n - 1) % n), c);
+      if (f > 1 - m) put(c.sid + ':' + ((b + 1) % n), c);
+    } else put(c.sid + ':0', c);
+  }
+  const out = [];
+  for (const p of pieces.values()) out.push({ color: p.color, hull: pieceHull(p.list, p.keys, D) });
   return out;
 }
 
-// ───────── 3. three.js 場景 ─────────
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// ───────── 4. three.js 場景 ─────────
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(devicePixelRatio);
 document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1b2030);
-const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
-scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x303848, 0.9));
-const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(20, 40, 30); scene.add(sun);
-const grid = new THREE.GridHelper(48, 48, 0x46527a, 0x2c3550); grid.position.set(13, -0.5, 0); scene.add(grid);
-const world = new THREE.Group(); world.position.set(-13, 0, 0); scene.add(world); // 讓機車置中
+const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 200);
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x2a2f44, 0.75));
+const sun = new THREE.DirectionalLight(0xfff4e0, 1.0); sun.position.set(18, 36, 24); scene.add(sun);
+const rim = new THREE.DirectionalLight(0x7fa0ff, 0.35); rim.position.set(-20, 10, -25); scene.add(rim);
+const grid = new THREE.GridHelper(60, 60, 0x3a4566, 0x242c45); grid.position.set(13, -0.01, 0); scene.add(grid);
+const shadow = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 }));
+shadow.rotation.x = -Math.PI / 2; shadow.scale.set(15.5, 4.5, 1); shadow.position.set(13.7, 0.01, 0); scene.add(shadow);
+const world = new THREE.Group(); world.position.set(-13, 0, 0); scene.add(world);
 const blockRoot = new THREE.Group(), polyRoot = new THREE.Group();
 world.add(blockRoot, polyRoot);
+const disposeKids = (g) => g.children.slice().forEach((o) => { g.remove(o); o.geometry && o.geometry.dispose(); });
 
 function rebuildBlocks() {
-  blockRoot.children.slice().forEach((o) => { blockRoot.remove(o); o.geometry.dispose(); o.dispose && o.dispose(); });
+  disposeKids(blockRoot);
   const cube = new THREE.InstancedMesh(new THREE.BoxGeometry(S * 0.96, S * 0.96, S * 0.96), new THREE.MeshStandardMaterial({ roughness: 0.6 }), cells.length);
   const m = new THREE.Matrix4(), col = new THREE.Color();
-  cells.forEach((c, i) => {
-    m.makeTranslation(...c.p); cube.setMatrixAt(i, m);
-    cube.setColorAt(i, col.set(c.color).offsetHSL(0, 0, (Math.random() - 0.5) * 0.06));
-  });
+  cells.forEach((c, i) => { m.makeTranslation(...c.p); cube.setMatrixAt(i, m); cube.setColorAt(i, col.set(c.color).offsetHSL(0, 0, (Math.random() - 0.5) * 0.06)); });
   blockRoot.add(cube);
 }
-
-function rebuildPoly(k) {
-  const tol = 0.5 * Math.pow(0.7, k - 1); // 精細度 1→容許凹度 50%，8→約 4%
-  polyRoot.children.slice().forEach((o) => { polyRoot.remove(o); o.geometry.dispose(); });
-  const t0 = performance.now();
-  const hulls = buildHulls(tol);
-  const ms = Math.round(performance.now() - t0);
-  const pos = [], colr = [], lines = [];
-  let nV = 0, nP = 0;
+let showEdges = false;
+function rebuildPoly() {
+  disposeKids(polyRoot);
+  const extra = +document.getElementById('dirs').value, seg = +document.getElementById('seg').value;
+  const t0 = performance.now(), hulls = buildHulls(extra, seg), ms = Math.round(performance.now() - t0);
+  const pos = [], colr = [], lines = []; let nV = 0, nP = 0;
+  const n3 = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
   for (const { color, hull } of hulls) {
-    const base = new THREE.Color(color);
-    nV += hull.vertices.length; nP += hull.polygons.length;
+    const base = new THREE.Color(color), V = hull.vertices;
+    nV += V.length; nP += hull.polygons.length;
     for (const poly of hull.polygons) {
-      const c = base.clone().offsetHSL(0, 0, (Math.random() - 0.5) * 0.12);
-      for (let i = 1; i < poly.length - 1; i++)
-        for (const j of [poly[0], poly[i], poly[i + 1]]) { pos.push(...hull.vertices[j]); colr.push(c.r, c.g, c.b); }
-      for (let i = 0; i < poly.length; i++) lines.push(...hull.vertices[poly[i]], ...hull.vertices[poly[(i + 1) % poly.length]]);
+      a.set(...V[poly[1]]).sub(n3.set(...V[poly[0]])); b.set(...V[poly[2]]).sub(n3.set(...V[poly[0]])); n3.crossVectors(a, b).normalize();
+      // 明暗只由法線方向決定 → 重疊的共面小面不會閃爍，同方向的面色一致
+      const c = base.clone().offsetHSL(0, 0, Math.sin(n3.x * 7.1 + n3.y * 3.3 + n3.z * 5.7) * 0.035);
+      for (let i = 1; i < poly.length - 1; i++) for (const j of [poly[0], poly[i], poly[i + 1]]) { pos.push(...V[j]); colr.push(c.r, c.g, c.b); }
+      for (let i = 0; i < poly.length; i++) lines.push(...V[poly[i]], ...V[poly[(i + 1) % poly.length]]);
     }
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('color', new THREE.Float32BufferAttribute(colr, 3));
   geo.computeVertexNormals();
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.75, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.6, metalness: 0.05, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
   const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(lines, 3));
-  polyRoot.add(new THREE.Mesh(geo, mat), new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22 })));
-  document.getElementById('info').textContent =
-    `${cells.length} 顆正立方體積木（邊長 ${+S.toFixed(3)}）→ ${hulls.length} 個凸包（每個零件各自分解），${nV} 頂點 / ${nP} 面 / ${pos.length / 9} 三角形　｜　拖曳旋轉、滾輪縮放`;
-  document.getElementById('kv').textContent = `容許凹度 ${(tol * 100).toFixed(1)}%（${ms} ms）`;
+  const ls = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 })); ls.visible = showEdges;
+  polyRoot.add(new THREE.Mesh(geo, mat), ls);
+  document.getElementById('info').textContent = `${cells.length} 顆正立方體積木（邊長 ${+S.toFixed(3)}）→ ${hulls.length} 個凸包，${nV} 頂點 / ${nP} 面 / ${pos.length / 9} 三角形（${ms} ms）　｜　拖曳旋轉、滾輪縮放`;
+  document.getElementById('dv').textContent = 26 + extra + ' 方向';
+  document.getElementById('sv').textContent = seg + ' 段';
   applyMode();
 }
 
-// ───────── 4. 模式切換與簡易軌道控制 ─────────
 let mode = 'lowpoly', spin = true;
 function applyMode() {
   blockRoot.visible = mode !== 'lowpoly';
@@ -218,29 +269,32 @@ function applyMode() {
 }
 document.querySelectorAll('[data-mode]').forEach((b) => (b.onclick = () => { mode = b.dataset.mode; applyMode(); }));
 document.getElementById('spin').onclick = (e) => { spin = !spin; e.target.classList.toggle('on', spin); };
-const ks = document.getElementById('k'), rs = document.getElementById('res');
-ks.oninput = () => rebuildPoly(+ks.value);
-function rebuildAll() { voxelize(+rs.value); rebuildBlocks(); rebuildPoly(+ks.value); }
+document.getElementById('edges').onclick = (e) => { showEdges = !showEdges; e.target.classList.toggle('on', showEdges); if (polyRoot.children[1]) polyRoot.children[1].visible = showEdges; };
+document.getElementById('dirs').oninput = rebuildPoly;
+document.getElementById('seg').oninput = rebuildPoly;
+const rs = document.getElementById('res');
+function rebuildAll() { voxelize(+rs.value); rebuildBlocks(); rebuildPoly(); }
 rs.onchange = rebuildAll;
 rebuildAll();
 
-let yaw = -0.6, pitch = 0.25, dist = 44, drag = null;
+let yaw = -0.6, pitch = 0.22, dist = 46, drag = null;
+window.setView = (y, p) => { yaw = y; pitch = p; };
 const el = renderer.domElement;
 el.onpointerdown = (e) => { drag = [e.clientX, e.clientY]; el.setPointerCapture(e.pointerId); };
 el.onpointerup = () => (drag = null);
 el.onpointermove = (e) => {
   if (!drag) return;
   yaw -= (e.clientX - drag[0]) * 0.008;
-  pitch = Math.max(-0.2, Math.min(1.4, pitch + (e.clientY - drag[1]) * 0.008));
+  pitch = Math.max(-0.1, Math.min(1.4, pitch + (e.clientY - drag[1]) * 0.008));
   drag = [e.clientX, e.clientY];
 };
 el.onwheel = (e) => { e.preventDefault(); dist = Math.max(15, Math.min(90, dist * (1 + e.deltaY * 0.001))); };
 function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
 addEventListener('resize', resize); resize();
 (function loop() {
-  if (spin && !drag) yaw += 0.006;
-  camera.position.set(Math.sin(yaw) * Math.cos(pitch) * dist, 6 + Math.sin(pitch) * dist, Math.cos(yaw) * Math.cos(pitch) * dist);
-  camera.lookAt(0, 6, 0);
+  if (spin && !drag) yaw += 0.005;
+  camera.position.set(Math.sin(yaw) * Math.cos(pitch) * dist, 7 + Math.sin(pitch) * dist, Math.cos(yaw) * Math.cos(pitch) * dist);
+  camera.lookAt(0, 7, 0);
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
 })();
