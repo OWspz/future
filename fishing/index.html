@@ -160,7 +160,7 @@ class OneEuro {
   }
 }
 // 靈敏度 0（最平滑）～10（最靈敏）
-let sens = 6;
+let sens = 8;
 try { const v = localStorage.getItem('tidefight-sens'); if (v != null) sens = +v; } catch (_) {}
 const thetaF = new OneEuro(1, 0.03), sideF = new OneEuro(1, 0.02);
 function applySens() {
