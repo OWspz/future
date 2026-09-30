@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>方塊機車 → Low-poly</title>
+<style>
+  html,body{margin:0;height:100%;background:#1b2030;color:#dfe6f5;font:14px/1.4 system-ui,sans-serif;overflow:hidden}
+  canvas{display:block;touch-action:none}
+  #ui{position:fixed;top:10px;left:10px;display:flex;flex-direction:column;gap:6px}
+  #ui .row{display:flex;gap:6px}
+  button{background:#2c3550;color:#dfe6f5;border:1px solid #46527a;border-radius:6px;padding:6px 12px;font:inherit;cursor:pointer}
+  button.on{background:#e8833a;border-color:#e8833a;color:#fff}
+  #info{position:fixed;bottom:10px;left:10px;opacity:.75;font-size:12px}
+</style>
+</head>
+<body>
+<div id="ui">
+  <div class="row">
+    <button data-mode="blocks">方塊</button>
+    <button data-mode="lowpoly" class="on">Low-poly（凸包）</button>
+    <button data-mode="both">疊合</button>
+  </div>
+  <div class="row"><button id="spin" class="on">自動旋轉</button></div>
+</div>
+<div id="info"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="hull.js"></script>
+<script>
+// ───────── 1. 用方塊拼出機車 ─────────
+// 座標：x 朝前、y 朝上、z 為左右。c=中心、s=尺寸、rz=繞 z 軸旋轉(度)
+// 同一個 group 的方塊之後會被合併成「一個凸包」。
+const B = [];
+const box = (group, color, c, s, rz = 0) => B.push({ group, color, c, s, rz });
+const mirror = (fn) => [1, -1].forEach(fn);
+
+// 輪子：4 根長條方塊以 0/45/90/135° 交叉 → 凸包後變成八角(16角)柱
+function wheel(name, x, r, w) {
+  const tire = name + 'Tire', rim = name + 'Rim';
+  for (let a = 0; a < 180; a += 45) {
+    box(tire, 0x23252b, [x, r, 0], [2 * r, 0.13 * r, w], a);
+    box(rim, 0xc9d1e0, [x, r, 0], [1.25 * r, 0.12 * r, w + 0.03], a);
+  }
+}
+wheel('front', 0.78, 0.36, 0.12);
+wheel('rear', -0.78, 0.36, 0.16);
+
+// 引擎：曲軸箱 + 汽缸頭
+box('engine', 0x6d7685, [0.02, 0.44, 0], [0.5, 0.36, 0.3]);
+box('engine', 0x6d7685, [0.12, 0.68, 0], [0.26, 0.2, 0.26], -20);
+// 車架
+box('frame', 0x3a3f4d, [-0.05, 0.72, 0], [0.62, 0.07, 0.09], 18);
+box('frame', 0x3a3f4d, [0.5, 0.78, 0], [0.12, 0.6, 0.08], 18);
+// 油箱：兩塊錯開的方塊 → 凸包自動長出斜面
+box('tank', 0xd9342b, [0.27, 0.93, 0], [0.42, 0.2, 0.3]);
+box('tank', 0xd9342b, [0.05, 0.98, 0], [0.26, 0.15, 0.26]);
+// 座墊與尾翼
+box('seat', 0x2a2a2e, [-0.25, 0.92, 0], [0.5, 0.1, 0.24]);
+box('seat', 0x2a2a2e, [-0.7, 1.0, 0], [0.3, 0.09, 0.18], 12);
+box('tail', 0xd9342b, [-0.62, 0.8, 0], [0.48, 0.1, 0.2], 14);
+box('taillight', 0xff5a4a, [-0.93, 0.9, 0], [0.04, 0.05, 0.12]);
+// 前叉（左右各一）、避震與擋泥板
+mirror((s) => {
+  box('fork' + s, 0xaab3c5, [0.66, 0.72, 0.15 * s], [0.06, 0.78, 0.06], 16);
+  box('fork' + s, 0xaab3c5, [0.57, 0.92, 0.15 * s], [0.08, 0.3, 0.08], 16);
+  box('swing' + s, 0x3a3f4d, [-0.4, 0.4, 0.12 * s], [0.78, 0.06, 0.05], 3);
+  box('exhaust' + s, 0xb8bcc6, [-0.35, 0.3, 0.2 * s], [0.6, 0.08, 0.08], 4);
+  box('exhaust' + s, 0xb8bcc6, [-0.72, 0.36, 0.2 * s], [0.3, 0.12, 0.12], 8);
+});
+box('fender', 0xd9342b, [0.82, 0.72, 0], [0.5, 0.03, 0.2], 10);
+box('fender', 0xd9342b, [-0.8, 0.74, 0], [0.5, 0.03, 0.2], -8);
+// 龍頭與頭燈
+box('bar', 0x2a2a2e, [0.54, 1.18, 0], [0.06, 0.05, 0.62]);
+box('bar', 0x2a2a2e, [0.54, 1.18, 0], [0.12, 0.08, 0.14], 16);
+box('light', 0xf3e6a1, [0.74, 1.04, 0], [0.12, 0.2, 0.2]);
+box('light', 0xf3e6a1, [0.66, 1.08, 0], [0.1, 0.3, 0.26]);
+box('mirror', 0xaab3c5, [0.5, 1.3, 0.3], [0.04, 0.04, 0.12]);
+box('mirror', 0xaab3c5, [0.5, 1.3, -0.3], [0.04, 0.04, 0.12]);
+
+// ───────── 2. 方塊 → 8 個角點 → 凸包 ─────────
+function corners(b) {
+  const r = (b.rz * Math.PI) / 180, cs = Math.cos(r), sn = Math.sin(r), out = [];
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+    const x = (sx * b.s[0]) / 2, y = (sy * b.s[1]) / 2;
+    out.push([b.c[0] + x * cs - y * sn, b.c[1] + x * sn + y * cs, b.c[2] + (sz * b.s[2]) / 2]);
+  }
+  return out;
+}
+const groups = {};
+for (const b of B) (groups[b.group] ||= { color: b.color, boxes: [] }).boxes.push(b);
+for (const g of Object.values(groups)) g.hull = Hull.convexHull(g.boxes.flatMap(corners));
+
+// ───────── 3. three.js 場景 ─────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1b2030);
+const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 50);
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x303848, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(2, 4, 3); scene.add(sun);
+const ground = new THREE.GridHelper(6, 24, 0x46527a, 0x2c3550); scene.add(ground);
+
+const blockRoot = new THREE.Group(), polyRoot = new THREE.Group();
+scene.add(blockRoot, polyRoot);
+const bike = [blockRoot, polyRoot];
+let nTri = 0, nPoly = 0, nVert = 0;
+
+for (const g of Object.values(groups)) {
+  // 方塊版
+  for (const b of g.boxes) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(...b.s),
+      new THREE.MeshStandardMaterial({ color: g.color, roughness: 0.8 }));
+    m.position.set(...b.c); m.rotation.z = (b.rz * Math.PI) / 180;
+    m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry), new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45 })));
+    blockRoot.add(m);
+  }
+  // 凸包版：每個多邊形一個平面色，並加一點隨機明暗 → low-poly 質感
+  const pos = [], col = [], base = new THREE.Color(g.color), lines = [];
+  const V = g.hull.vertices;
+  nVert += V.length; nPoly += g.hull.polygons.length;
+  for (const poly of g.hull.polygons) {
+    const c = base.clone().offsetHSL(0, 0, (Math.random() - 0.5) * 0.12);
+    for (let k = 1; k < poly.length - 1; k++) {
+      for (const i of [poly[0], poly[k], poly[k + 1]]) { pos.push(...V[i]); col.push(c.r, c.g, c.b); }
+      nTri++;
+    }
+    for (let k = 0; k < poly.length; k++) lines.push(...V[poly[k]], ...V[poly[(k + 1) % poly.length]]);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.75, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
+  const eg = new THREE.BufferGeometry(); eg.setAttribute('position', new THREE.Float32BufferAttribute(lines, 3));
+  mesh.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 })));
+  polyRoot.add(mesh);
+}
+document.getElementById('info').textContent =
+  `${B.length} 個方塊 → ${Object.keys(groups).length} 個凸包，共 ${nVert} 頂點 / ${nPoly} 面 / ${nTri} 三角形　｜　拖曳旋轉、滾輪縮放`;
+
+// ───────── 4. 模式切換與簡易軌道控制 ─────────
+let mode = 'lowpoly', spin = true;
+function setMode(m) {
+  mode = m;
+  blockRoot.visible = m !== 'lowpoly';
+  polyRoot.visible = m !== 'blocks';
+  polyRoot.traverse((o) => { if (o.isMesh) { o.material.transparent = m === 'both'; o.material.opacity = m === 'both' ? 0.45 : 1; o.material.depthWrite = m !== 'both'; } });
+  document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === m));
+}
+document.querySelectorAll('[data-mode]').forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
+document.getElementById('spin').onclick = (e) => { spin = !spin; e.target.classList.toggle('on', spin); };
+setMode('lowpoly');
+
+let yaw = -0.6, pitch = 0.25, dist = 4.2, drag = null;
+const el = renderer.domElement;
+el.onpointerdown = (e) => { drag = [e.clientX, e.clientY]; el.setPointerCapture(e.pointerId); };
+el.onpointerup = () => (drag = null);
+el.onpointermove = (e) => {
+  if (!drag) return;
+  yaw -= (e.clientX - drag[0]) * 0.008;
+  pitch = Math.max(-0.2, Math.min(1.4, pitch + (e.clientY - drag[1]) * 0.008));
+  drag = [e.clientX, e.clientY];
+};
+el.onwheel = (e) => { e.preventDefault(); dist = Math.max(1.8, Math.min(9, dist * (1 + e.deltaY * 0.001))); };
+function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize); resize();
+
+(function loop() {
+  if (spin && !drag) yaw += 0.006;
+  camera.position.set(Math.sin(yaw) * Math.cos(pitch) * dist, 0.6 + Math.sin(pitch) * dist, Math.cos(yaw) * Math.cos(pitch) * dist);
+  camera.lookAt(0, 0.6, 0);
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
