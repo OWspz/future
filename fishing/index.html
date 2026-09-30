@@ -757,9 +757,16 @@ async function enableSensor() {
 $('#btnSensor').addEventListener('click', enableSensor);
 $('#btnPointer').addEventListener('click', () => begin('pointer'));
 $('#btnVib').addEventListener('click', () => {
-  vib([200, 100, 200]);
-  toast(canVib ? '有感覺到兩下震動就正常。沒有的話，請檢查手機是否開了靜音／勿擾，或系統的觸控震動是否關閉。'
-               : 'iPhone 會用觸覺回饋代替震動（需要 iOS 18 以上，且「設定 > 聲音與觸覺 > 系統觸覺回饋」要開啟）。');
+  if (!canVib) { vib([200, 100, 200]); toast('iPhone 會用觸覺回饋代替震動（需要 iOS 18 以上，且「設定 > 聲音與觸覺 > 系統觸覺回饋」要開啟）。'); return; }
+  let ok = false;
+  try { ok = navigator.vibrate([200, 100, 200]); } catch (_) {}
+  shake = 8;
+  const inApp = /; wv\)|FBAN|FBAV|Line\/|Instagram/i.test(navigator.userAgent);
+  const framed = window.top !== window.self;
+  if (framed) toast('這個頁面被嵌在別的網頁裡，瀏覽器不准它震動。請用 Chrome 直接開啟遊戲網址。');
+  else if (inApp) toast('你現在是在 App 內建的瀏覽器裡開啟，它通常不支援震動。請點右上角選單，選「用 Chrome 開啟」。');
+  else if (!ok) toast('瀏覽器拒絕了震動。請確認是用 Chrome 開啟，並且關掉省電模式再試一次。');
+  else toast('瀏覽器已送出震動。如果沒感覺，請到手機「設定 > 音效與震動」，打開震動並把「觸控／通知震動強度」調高，也關掉勿擾模式。');
 });
 modeBtn.addEventListener('click', () => {
   if (inp.mode === 'pointer') { if (inp.gotMotion) setMode('sensor'); else enableSensor(); }
