@@ -1,0 +1,16 @@
+[Unit]
+Description=Bingo MQTT monitor for A/B stations
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/bingo-monitor
+ExecStart=/usr/bin/python3 /opt/bingo-monitor/mqtt_bingo_monitor.py --config /opt/bingo-monitor/mqtt_bingo_monitor.json
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/opt/bingo-monitor/mqtt_bingo_monitor.env
+
+[Install]
+WantedBy=multi-user.target
